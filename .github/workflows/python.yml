@@ -31,6 +31,8 @@ jobs:
         with:
           images: |
             ${{ env.REGISTRY_IMAGE_PREFIX }}${{ matrix.element }}
+          flavor: |
+            latest=true
 
       - name: Login to Docker registry
         uses: docker/login-action@v3
