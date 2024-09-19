@@ -50,7 +50,7 @@ function install_python() {
     # This is to not remove static lib when using CUDA
     # sed -i "s/ -o -name '\*\.a' / /" "${output_file}"
 
-    sed -i -e 's|xargs -r apt-mark manual \\|xargs -I sh -c "apt-mark manual {} \|\| echo 'OK'" \\|' "${output_file}"
+    sed -i -e 's|xargs -r apt-mark manual \\|xargs -I {} sh -c "apt-mark manual {} \|\| echo 'OK'" \\|' "${output_file}"
 
 # | xargs -r apt-mark manual \
 		# | xargs -I sh -c "apt-mark manual {} || echo 'OK'" \

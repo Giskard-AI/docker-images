@@ -126,7 +126,7 @@ RUN set -eux; \
 		| xargs -r dpkg-query --search \
 		| cut -d: -f1 \
 		| sort -u \
-		| xargs -I sh -c "apt-mark manual {} || echo OK" \
+		| xargs -I {} sh -c "apt-mark manual {} || echo OK" \
 	; \
 	apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
 	rm -rf /var/lib/apt/lists/*; \
