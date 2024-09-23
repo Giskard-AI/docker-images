@@ -61,7 +61,8 @@ jobs:
           builder: ${{ steps.builder.outputs.name }}
           platforms: |
             linux/${{ matrix.platform }}
-          outputs: type=docker,name=${{ env.REGISTRY_IMAGE_PREFIX }}${{ matrix.element }},name-canonical=true
+          outputs: type=image,name=${{ env.REGISTRY_IMAGE_PREFIX }}${{ matrix.element }},push-by-digest=true,name-canonical=true,push=true
+          # outputs: type=docker,name=${{ env.REGISTRY_IMAGE_PREFIX }}${{ matrix.element }},name-canonical=true
       # For details, see link below
       # https://docs.docker.com/build/ci/github-actions/multi-platform/
       - name: Export digest
