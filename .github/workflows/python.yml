@@ -40,9 +40,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ env.REGISTRY_IMAGE_PREFIX }}${{ matrix.element }}-${{matrix.platform}}
+            ${{ env.REGISTRY_IMAGE_PREFIX }}${{ matrix.element }}
           flavor: |
-            latest=${{ github.ref_name == 'main'}}
+            latest=false
+          tags: |
+            type=raw,enable=true,value=${{matrix.platform}}
 
       - name: Login to Docker registry
         uses: docker/login-action@v3
@@ -56,7 +58,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./${{ matrix.element }}
-          tags: ${{ matrix.platform }}
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           builder: ${{ steps.builder.outputs.name }}
           platforms: |
