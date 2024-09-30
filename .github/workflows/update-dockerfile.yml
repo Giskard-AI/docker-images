@@ -1,0 +1,35 @@
+name: Update python dockerfile
+
+on:
+    schedule:
+    - cron: '0 4 * * *' # Run every day at 4 AM UTC
+    workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.0
+        with:
+          ref: main
+
+      - name: Try to update dockerfile
+        working-directory: /python
+        run: |
+          bash generate_dockerfile.sh
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7.0.5
+        with:
+          commit-message: Updating to latest python version
+          add-paths: |
+            python/Dockerfile
+          branch: cron-python-update
+          title: Updating to latest python version
+          assignees: Hartorn
+          token: ${{ secrets.DOCKER_PYTHON_PR_TOKEN }}

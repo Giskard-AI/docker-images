@@ -7,7 +7,6 @@ FOLDER=$(readlink -f "${BASH_SOURCE[0]}" | xargs dirname)
 DEBIAN_VERSION="bookworm"
 DEBIAN_VARIANT="slim"
 
-POETRY_VERSION="1.1.5"
 
 function install_python() {
     output_file=$1
