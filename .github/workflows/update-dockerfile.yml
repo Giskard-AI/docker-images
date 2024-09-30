@@ -19,7 +19,7 @@ jobs:
           ref: main
 
       - name: Try to update dockerfile
-        working-directory: /python
+        working-directory: python
         run: |
           bash generate_dockerfile.sh
 
