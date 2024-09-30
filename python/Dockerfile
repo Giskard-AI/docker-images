@@ -2,6 +2,8 @@
 # GENERATED FROM SCRIPTS
 FROM ubuntu:24.04
 
+# Adding comment to trigger the PR creation
+
 # Avoid tzdata interactive action
 ENV DEBIAN_FRONTEND noninteractive
 
