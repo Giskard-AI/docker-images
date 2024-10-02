@@ -9,7 +9,7 @@ ENV DEBIAN_FRONTEND noninteractive
 
 # Dockerfile generated fragment to install Python and Pip
 # Source: https://raw.githubusercontent.com/docker-library/python/master/3.12/slim-bookworm/Dockerfile
-# Python: 3.12.6
+# Python: 3.12.7
 
 
 # ensure local python is preferred over distribution python
@@ -31,7 +31,7 @@ RUN set -eux; \
 	rm -rf /var/lib/apt/lists/*
 
 ENV GPG_KEY 7169605F62C751356D054A26A821E680E5FA6305
-ENV PYTHON_VERSION 3.12.6
+ENV PYTHON_VERSION 3.12.7
 
 RUN set -eux; \
 	\
