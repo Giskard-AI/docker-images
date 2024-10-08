@@ -52,7 +52,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           builder: ${{ steps.builder.outputs.name }}
-          push: false
+          push: true
 
           # For details, see link below
       # https://docs.docker.com/build/ci/github-actions/multi-platform/
@@ -101,11 +101,11 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_ROBOT_TOKEN }}
 
-      #- name: Create manifest list and push
-      #  working-directory: /tmp/digests
-      #  run: |
-      #    docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-      #      $(printf '${{ env.REGISTRY_IMAGE_PREFIX }}python@sha256:%s ' *)
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY_IMAGE_PREFIX }}python@sha256:%s ' *)
 
       - name: Inspect image
         run: |
