@@ -52,5 +52,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           builder: ${{ steps.builder.outputs.name }}
           platforms: linux/amd64,linux/arm64
-          push: false
+          push: true
 
