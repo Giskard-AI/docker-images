@@ -59,7 +59,7 @@ jobs:
       # https://docs.docker.com/build/ci/github-actions/multi-platform/
       - name: Export digest
         run: |
-          mkdir -p /tmp/digests
+          mkdir -p /tmp/digests/${{ matrix.version }}
           digest="${{ steps.push.outputs.digest }}"
           touch "/tmp/digests/${{ matrix.version }}/${digest#sha256:}"
 
