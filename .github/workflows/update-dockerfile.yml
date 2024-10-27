@@ -32,7 +32,7 @@ jobs:
         with:
           commit-message: Updating to latest python version
           add-paths: |
-            python/Dockerfile
+            python/Dockerfile_*
           branch: cron-python-update
           title: Updating to latest python version
           assignees: Hartorn
