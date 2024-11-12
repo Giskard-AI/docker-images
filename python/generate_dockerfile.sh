@@ -6,7 +6,8 @@ FOLDER=$(readlink -f "${BASH_SOURCE[0]}" | xargs dirname)
 
 DEBIAN_VERSION="bookworm"
 DEBIAN_VARIANT="slim"
-
+# Should be updated regularly, to endforce most recent ubuntu
+UBUNTU_BASE_IMAGE="ubuntu:24.04@sha256:99c35190e22d294cdace2783ac55effc69d32896daaa265f0bbedbcde4fbe3e5"
 
 function install_python() {
     output_file=$1
@@ -66,7 +67,7 @@ for python_version in "3.12" "3.13"; do
     output_file="${FOLDER}/Dockerfile_${python_version}"
     echo "# DO NOT MODIFY MANUALLY" >"${output_file}"
     echo "# GENERATED FROM SCRIPTS" >>"${output_file}"
-    echo "FROM ubuntu:24.04" >>"${output_file}"
+    echo "FROM ${UBUNTU_BASE_IMAGE}" >>"${output_file}"
     echo '' >>"${output_file}"
 
     echo '# Avoid tzdata interactive action' >>"${output_file}"
