@@ -5,5 +5,5 @@
       "helpers:pinGitHubActionDigests",
       ":pinAllExceptPeerDependencies",
       "docker:pinDigests"
-   ],
+   ]
 }
