@@ -1,6 +1,6 @@
 # DO NOT MODIFY MANUALLY
 # GENERATED FROM SCRIPTS
-FROM ubuntu:24.04@sha256:72297848456d5d37d1262630108ab308d3e9ec7ed1c3286a32fe09856619a782
+FROM ubuntu:24.04@sha256:1e622c5f073b4f6bfad6632f2616c7f59ef256e96fe78bf6a595d1dc4376ac02
 
 # Avoid tzdata interactive action
 ENV DEBIAN_FRONTEND noninteractive
@@ -9,7 +9,7 @@ ENV DEBIAN_FRONTEND noninteractive
 
 # Dockerfile generated fragment to install Python and Pip
 # Source: https://raw.githubusercontent.com/docker-library/python/master/3.12/slim-bookworm/Dockerfile
-# Python: 3.12.9
+# Python: 3.12.10
 
 
 # ensure local python is preferred over distribution python
@@ -31,8 +31,8 @@ RUN set -eux; \
 	rm -rf /var/lib/apt/lists/*
 
 ENV GPG_KEY 7169605F62C751356D054A26A821E680E5FA6305
-ENV PYTHON_VERSION 3.12.9
-ENV PYTHON_SHA256 7220835d9f90b37c006e9842a8dff4580aaca4318674f947302b8d28f3f81112
+ENV PYTHON_VERSION 3.12.10
+ENV PYTHON_SHA256 07ab697474595e06f06647417d3c7fa97ded07afc1a7e4454c5639919b46eaea
 
 RUN set -eux; \
 	\
