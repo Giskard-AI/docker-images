@@ -63,7 +63,7 @@ function install_python() {
     cleanup_folder
 }
 
-for python_version in "3.12" "3.13"; do
+for python_version in "3.12" "3.13" "3.14"; do
     output_file="${FOLDER}/Dockerfile_${python_version}"
     echo "# DO NOT MODIFY MANUALLY" >"${output_file}"
     echo "# GENERATED FROM SCRIPTS" >>"${output_file}"
