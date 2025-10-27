@@ -16,7 +16,7 @@ jobs:
   build:
     strategy:
       matrix:
-        version: ["3.12", "3.13"]
+        version: ["3.12", "3.13", "3.14"]
         platform: ['ubuntu-latest', 'runner-ubuntu24-arm64']
       fail-fast: false
     runs-on: ${{ matrix.platform }}
@@ -28,6 +28,12 @@ jobs:
         id: builder
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
 
+      - name: Read Python patch version
+        id: ver
+        run: |
+          pv=$(grep '^ENV PYTHON_VERSION ' ./python/Dockerfile_${{ matrix.version }} | awk '{print $3}')
+          echo "python_patch=$pv" >> "$GITHUB_OUTPUT"
+
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v5
@@ -38,6 +44,7 @@ jobs:
             latest=false
           tags: |
             type=raw,enable=true,value=${{ matrix.version }}-${{ matrix.platform }}
+            type=raw,enable=true,value=${{ steps.ver.outputs.python_patch }}-${{ matrix.platform }}
 
       - name: Login to Docker registry
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
@@ -76,11 +83,14 @@ jobs:
   merge:
     strategy:
       matrix:
-        version: ["3.12", "3.13"]
+        version: ["3.12", "3.13", "3.14"]
     runs-on: ubuntu-latest
     needs:
       - build
     steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
       - name: Download digests
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
@@ -91,12 +101,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
 
+      - name: Read Python patch version
+        id: ver
+        run: |
+          pv=$(grep '^ENV PYTHON_VERSION ' ./python/Dockerfile_${{ matrix.version }} | awk '{print $3}')
+          echo "python_patch=$pv" >> "$GITHUB_OUTPUT"
+
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v5
         with:
           tags: |
             type=raw,value=${{ matrix.version }}
+            type=raw,value=${{ steps.ver.outputs.python_patch }}
           images: |
             ${{ env.REGISTRY_IMAGE_PREFIX }}python
           flavor: |
