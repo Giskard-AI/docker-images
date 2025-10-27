@@ -28,25 +28,42 @@ jobs:
       - name: Get latest ubuntu 24.04 digest
         id: ubuntu
         run: |
-          digest=$(docker buildx imagetools inspect docker.io/library/ubuntu:24.04 | awk '/Digest: sha256:/ {print $2; exit}')
+          set -euo pipefail
+          digest=$(docker buildx imagetools inspect ubuntu:24.04 --format '{{.Digest}}' || true)
+          if [ -z "$digest" ] || [ "$digest" = "<no value>" ]; then
+            digest=$(docker buildx imagetools inspect ubuntu:24.04 | awk '/^Digest: sha256:/ {print $2; exit}')
+          fi
+          if [ -z "$digest" ]; then
+            echo "Failed to resolve ubuntu:24.04 digest" 1>&2
+            exit 1
+          fi
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Update UBUNTU_BASE_IMAGE if needed
         id: update_ubuntu
         working-directory: python
         run: |
-          current=$(grep '^UBUNTU_BASE_IMAGE=' generate_dockerfile.sh | sed -E 's/.*@([^\"]+)\"?/\1/')
-          if [ "$current" != "${{ steps.ubuntu.outputs.digest }}" ]; then
-            sed -i -E "s|^UBUNTU_BASE_IMAGE=.*$|UBUNTU_BASE_IMAGE=\"ubuntu:24.04@${{ steps.ubuntu.outputs.digest }}\"|g" generate_dockerfile.sh
-            echo "updated=true" >> "$GITHUB_OUTPUT"
-          else
+          set -euo pipefail
+          new_line="UBUNTU_BASE_IMAGE=\"ubuntu:24.04@${{ steps.ubuntu.outputs.digest }}\""
+          if grep -q "^${new_line}$" generate_dockerfile.sh; then
             echo "updated=false" >> "$GITHUB_OUTPUT"
+          else
+            sed -i -E "0,/^UBUNTU_BASE_IMAGE=/{s|^UBUNTU_BASE_IMAGE=.*$|${new_line}|}" generate_dockerfile.sh
+            echo "updated=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Try to update dockerfile
         working-directory: python
         run: |
           bash generate_dockerfile.sh
+
+      - name: Verify Ubuntu digest is pinned in Dockerfiles
+        run: |
+          set -euo pipefail
+          for f in python/Dockerfile_*; do
+            echo "Checking $f"
+            grep -q '^FROM ubuntu:24\.04@sha256:' "$f"
+          done
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7.0.8
