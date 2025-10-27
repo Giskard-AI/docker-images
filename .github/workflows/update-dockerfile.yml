@@ -29,9 +29,11 @@ jobs:
         id: ubuntu
         run: |
           set -euo pipefail
-          digest=$(docker buildx imagetools inspect ubuntu:24.04 --format '{{.Digest}}' || true)
-          if [ -z "$digest" ] || [ "$digest" = "<no value>" ]; then
-            digest=$(docker buildx imagetools inspect ubuntu:24.04 | awk '/^Digest: sha256:/ {print $2; exit}')
+          # Try imagetools human output
+          digest=$(docker buildx imagetools inspect ubuntu:24.04 2>/dev/null | grep -m1 -E '^Digest:[[:space:]]+sha256:' | awk '{print $2}')
+          # Fallback to docker manifest verbose output
+          if [ -z "$digest" ]; then
+            digest=$(docker manifest inspect ubuntu:24.04 -v 2>/dev/null | grep -m1 -E '^Digest:[[:space:]]+sha256:' | awk '{print $2}')
           fi
           if [ -z "$digest" ]; then
             echo "Failed to resolve ubuntu:24.04 digest" 1>&2
