@@ -30,22 +30,29 @@ jobs:
         run: |
           set -euo pipefail
           
-          # Prefer structured output over grepping human text
-          digest="$(docker buildx imagetools inspect ubuntu:24.04 \
-                     --format '{{.Manifest.Digest}}' 2>/dev/null || true)"
+          # Try buildx with a valid template (single line)
+          digest="$(
+            docker buildx imagetools inspect ubuntu:24.04 \
+              --format '{{.Digest}}' 2>/dev/null || true
+          )"
           
-          # Optional fallback to verbose manifest if empty
+          # Fallback to verbose manifest and extract only the sha256
           if [ -z "${digest:-}" ]; then
-            digest="$(docker manifest inspect ubuntu:24.04 -v 2>/dev/null \
-                      | grep -m1 -E '^Digest:[[:space:]]+sha256:' \
-                      | awk '{print $2}' || true)"
+            digest="$(
+              docker manifest inspect ubuntu:24.04 -v 2>/dev/null \
+                | grep -Eo 'sha256:[0-9a-f]{64}' | head -n1 || true
+            )"
           fi
+          
+          # As a final guard, reduce to exactly one sha256 line in case of surprises
+          digest="$(printf '%s\n' "$digest" | tr -d '\r' | grep -Eo 'sha256:[0-9a-f]{64}' | head -n1 || true)"
           
           if [ -z "${digest:-}" ]; then
             echo "Failed to resolve ubuntu:24.04 digest" >&2
             exit 1
           fi
           
+          # Safe to write: exactly one line "name=value"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Update UBUNTU_BASE_IMAGE if needed
