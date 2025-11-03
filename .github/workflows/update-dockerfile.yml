@@ -29,16 +29,23 @@ jobs:
         id: ubuntu
         run: |
           set -euo pipefail
-          # Try imagetools human output
-          digest=$(docker buildx imagetools inspect ubuntu:24.04 2>/dev/null | grep -m1 -E '^Digest:[[:space:]]+sha256:' | awk '{print $2}')
-          # Fallback to docker manifest verbose output
-          if [ -z "$digest" ]; then
-            digest=$(docker manifest inspect ubuntu:24.04 -v 2>/dev/null | grep -m1 -E '^Digest:[[:space:]]+sha256:' | awk '{print $2}')
+          
+          # Prefer structured output over grepping human text
+          digest="$(docker buildx imagetools inspect ubuntu:24.04 \
+                     --format '{{.Manifest.Digest}}' 2>/dev/null || true)"
+          
+          # Optional fallback to verbose manifest if empty
+          if [ -z "${digest:-}" ]; then
+            digest="$(docker manifest inspect ubuntu:24.04 -v 2>/dev/null \
+                      | grep -m1 -E '^Digest:[[:space:]]+sha256:' \
+                      | awk '{print $2}' || true)"
           fi
-          if [ -z "$digest" ]; then
-            echo "Failed to resolve ubuntu:24.04 digest" 1>&2
+          
+          if [ -z "${digest:-}" ]; then
+            echo "Failed to resolve ubuntu:24.04 digest" >&2
             exit 1
           fi
+          
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Update UBUNTU_BASE_IMAGE if needed
