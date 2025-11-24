@@ -7,7 +7,7 @@ FOLDER=$(readlink -f "${BASH_SOURCE[0]}" | xargs dirname)
 DEBIAN_VERSION="bookworm"
 DEBIAN_VARIANT="slim"
 # Should be updated regularly, to endforce most recent ubuntu
-UBUNTU_BASE_IMAGE="ubuntu:24.04@sha256:4fdf0125919d24aec972544669dcd7d6a26a8ad7e6561c73d5549bd6db258ac2"
+UBUNTU_BASE_IMAGE="ubuntu:24.04@sha256:c35e29c9450151419d9448b0fd75374fec4fff364a27f176fb458d472dfc9e54"
 
 function install_python() {
     output_file=$1
