@@ -25,34 +25,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
 
-      - name: Get latest ubuntu 24.04 digest
+      - name: Get latest ubuntu 24.04 digest via docker pull
         id: ubuntu
         run: |
           set -euo pipefail
-          
-          # Try buildx with a valid template (single line)
-          digest="$(
-            docker buildx imagetools inspect ubuntu:24.04 \
-              --format '{{.Digest}}' 2>/dev/null || true
-          )"
-          
-          # Fallback to verbose manifest and extract only the sha256
+          # Pull the tag and parse the Digest line from the pull output (no fallbacks)
+          pull_output="$(docker pull ubuntu:24.04 2>&1 | tee /dev/stderr)"
+          digest="$(printf '%s\n' "$pull_output" | sed -n 's/^Digest:[[:space:]]*\\(sha256:[0-9a-f]\\{64\\}\\).*/\\1/p' | head -n1)"
           if [ -z "${digest:-}" ]; then
-            digest="$(
-              docker manifest inspect ubuntu:24.04 -v 2>/dev/null \
-                | grep -Eo 'sha256:[0-9a-f]{64}' | head -n1 || true
-            )"
-          fi
-          
-          # As a final guard, reduce to exactly one sha256 line in case of surprises
-          digest="$(printf '%s\n' "$digest" | tr -d '\r' | grep -Eo 'sha256:[0-9a-f]{64}' | head -n1 || true)"
-          
-          if [ -z "${digest:-}" ]; then
-            echo "Failed to resolve ubuntu:24.04 digest" >&2
+            echo "Failed to parse ubuntu:24.04 digest from docker pull output" >&2
             exit 1
           fi
-          
-          # Safe to write: exactly one line "name=value"
+
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Update UBUNTU_BASE_IMAGE if needed
