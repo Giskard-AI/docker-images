@@ -31,7 +31,8 @@ jobs:
           set -euo pipefail
           # Pull the tag and parse the Digest line from the pull output (no fallbacks)
           pull_output="$(docker pull ubuntu:24.04 2>&1 | tee /dev/stderr)"
-          digest="$(printf '%s\n' "$pull_output" | sed -n 's/^Digest:[[:space:]]*\\(sha256:[0-9a-f]\\{64\\}\\).*/\\1/p' | head -n1)"
+          # Extract the first sha256 digest seen in output (covers both "Digest: ..." and progress lines)
+          digest="$(printf '%s\n' "$pull_output" | tr -d '\r' | grep -Eo 'sha256:[0-9a-f]{64}' | head -n1)"
           if [ -z "${digest:-}" ]; then
             echo "Failed to parse ubuntu:24.04 digest from docker pull output" >&2
             exit 1
