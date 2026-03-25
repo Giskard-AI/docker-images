@@ -6,23 +6,33 @@ on:
       - main
     paths:
       - 'python/Dockerfile_*'
-  workflow_dispatch:
-permissions:
-  contents: write
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   REGISTRY_IMAGE_PREFIX: "quay.io/giskard/"
+
 jobs:
   build:
+    name: Build ${{ matrix.version }} (${{ matrix.platform }})
     strategy:
       matrix:
         version: ["3.12", "3.13", "3.14"]
         platform: ['ubuntu-latest', 'runner-ubuntu24-arm64']
       fail-fast: false
     runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: read # clone repo
+      id-token: write # OIDC token for Quay registry auth
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         id: builder
@@ -31,8 +41,10 @@ jobs:
       - name: Read Python patch version
         id: ver
         run: |
-          pv=$(grep '^ENV PYTHON_VERSION ' ./python/Dockerfile_${{ matrix.version }} | awk '{print $3}')
+          pv=$(grep '^ENV PYTHON_VERSION ' "./python/Dockerfile_${VERSION}" | awk '{print $3}')
           echo "python_patch=$pv" >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ matrix.version }}
 
       - name: Docker meta
         id: meta
@@ -46,12 +58,24 @@ jobs:
             type=raw,enable=true,value=${{ matrix.version }}-${{ matrix.platform }}
             type=raw,enable=true,value=${{ steps.ver.outputs.python_patch }}-${{ matrix.platform }}
 
-      - name: Login to Docker registry
+      - name: Get Quay token via OIDC
+        id: quay-token
+        run: |
+          OIDC_TOKEN=$(curl -sS \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=quay.io" | jq -r '.value')
+          QUAY_TOKEN=$(curl -sS \
+            --user "giskard+docker_images_ci:${OIDC_TOKEN}" \
+            https://quay.io/oauth2/federation/robot/token | jq -r '.token')
+          echo "::add-mask::${QUAY_TOKEN}"
+          echo "token=${QUAY_TOKEN}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to Quay
         uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4
         with:
           registry: quay.io
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_ROBOT_TOKEN }}
+          username: giskard+docker_images_ci
+          password: ${{ steps.quay-token.outputs.token }}
 
       - name: Push
         id: push
@@ -64,13 +88,13 @@ jobs:
           builder: ${{ steps.builder.outputs.name }}
           push: true
 
-          # For details, see link below
-      # https://docs.docker.com/build/ci/github-actions/multi-platform/
       - name: Export digest
         run: |
-          mkdir -p /tmp/digests/${{ matrix.version }}
-          digest="${{ steps.push.outputs.digest }}"
-          touch "/tmp/digests/${{ matrix.version }}/${digest#sha256:}"
+          mkdir -p "/tmp/digests/${VERSION}"
+          touch "/tmp/digests/${VERSION}/${PUSH_DIGEST#sha256:}"
+        env:
+          VERSION: ${{ matrix.version }}
+          PUSH_DIGEST: ${{ steps.push.outputs.digest }}
 
       - name: Upload digest
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
@@ -81,15 +105,21 @@ jobs:
           retention-days: 1
 
   merge:
+    name: Merge manifests (${{ matrix.version }})
     strategy:
       matrix:
         version: ["3.12", "3.13", "3.14"]
     runs-on: ubuntu-latest
     needs:
       - build
+    permissions:
+      contents: read # clone repo
+      id-token: write # OIDC token for Quay registry auth
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -104,8 +134,10 @@ jobs:
       - name: Read Python patch version
         id: ver
         run: |
-          pv=$(grep '^ENV PYTHON_VERSION ' ./python/Dockerfile_${{ matrix.version }} | awk '{print $3}')
+          pv=$(grep '^ENV PYTHON_VERSION ' "./python/Dockerfile_${VERSION}" | awk '{print $3}')
           echo "python_patch=$pv" >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ matrix.version }}
 
       - name: Docker meta
         id: meta
@@ -119,19 +151,33 @@ jobs:
           flavor: |
             latest=false
 
-      - name: Login to Docker registry
+      - name: Get Quay token via OIDC
+        id: quay-token
+        run: |
+          OIDC_TOKEN=$(curl -sS \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=quay.io" | jq -r '.value')
+          QUAY_TOKEN=$(curl -sS \
+            --user "giskard+docker_images_ci:${OIDC_TOKEN}" \
+            https://quay.io/oauth2/federation/robot/token | jq -r '.token')
+          echo "::add-mask::${QUAY_TOKEN}"
+          echo "token=${QUAY_TOKEN}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to Quay
         uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4
         with:
           registry: quay.io
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_ROBOT_TOKEN }}
+          username: giskard+docker_images_ci
+          password: ${{ steps.quay-token.outputs.token }}
 
       - name: Create manifest list and push
         working-directory: /tmp/digests/${{ matrix.version }}
         run: |
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.REGISTRY_IMAGE_PREFIX }}python@sha256:%s ' *)
+            $(printf "${REGISTRY_IMAGE_PREFIX}python@sha256:%s " *)
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE_PREFIX }}python:${{ steps.meta.outputs.version }}
+          docker buildx imagetools inspect "${REGISTRY_IMAGE_PREFIX}python:${META_VERSION}"
+        env:
+          META_VERSION: ${{ steps.meta.outputs.version }}

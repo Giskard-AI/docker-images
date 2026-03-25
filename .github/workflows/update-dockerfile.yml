@@ -2,25 +2,29 @@ name: Update python dockerfile
 
 on:
     schedule:
-    - cron: '0 4 * * *' # Run every day at 4 AM UTC
+    - cron: '0 4 * * *'
     workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
-  build:
+  update:
+    name: Update Dockerfiles
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: automation
+    permissions:
+      contents: read # clone repo (app token handles write operations)
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: main
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
@@ -29,15 +33,12 @@ jobs:
         id: ubuntu
         run: |
           set -euo pipefail
-          # Pull the tag and parse the Digest line from the pull output (no fallbacks)
           pull_output="$(docker pull ubuntu:24.04 2>&1 | tee /dev/stderr)"
-          # Extract the first sha256 digest seen in output (covers both "Digest: ..." and progress lines)
           digest="$(printf '%s\n' "$pull_output" | tr -d '\r' | grep -Eo 'sha256:[0-9a-f]{64}' | head -n1)"
           if [ -z "${digest:-}" ]; then
             echo "Failed to parse ubuntu:24.04 digest from docker pull output" >&2
             exit 1
           fi
-
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Update UBUNTU_BASE_IMAGE if needed
@@ -45,13 +46,15 @@ jobs:
         working-directory: python
         run: |
           set -euo pipefail
-          new_line="UBUNTU_BASE_IMAGE=\"ubuntu:24.04@${{ steps.ubuntu.outputs.digest }}\""
+          new_line="UBUNTU_BASE_IMAGE=\"ubuntu:24.04@${UBUNTU_DIGEST}\""
           if grep -q "^${new_line}$" generate_dockerfile.sh; then
             echo "updated=false" >> "$GITHUB_OUTPUT"
           else
             sed -i -E "0,/^UBUNTU_BASE_IMAGE=/{s|^UBUNTU_BASE_IMAGE=.*$|${new_line}|}" generate_dockerfile.sh
             echo "updated=true" >> "$GITHUB_OUTPUT"
           fi
+        env:
+          UBUNTU_DIGEST: ${{ steps.ubuntu.outputs.digest }}
 
       - name: Try to update dockerfile
         working-directory: python
@@ -66,7 +69,14 @@ jobs:
             grep -q '^FROM ubuntu:24\.04@sha256:' "$f"
           done
 
-      - name: Create Pull Request
+      - name: Generate automation token
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3
+        with:
+          app-id: ${{ vars.AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
+
+      - name: Create Pull Request # zizmor: ignore[superfluous-actions]
         uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0 # v8.1.0
         with:
           commit-message: Updating to latest python version and ubuntu base digest
@@ -76,4 +86,4 @@ jobs:
           branch: cron-python-update
           title: Updating to latest python version and ubuntu base digest
           assignees: Hartorn
-          token: ${{ secrets.DOCKER_PYTHON_PR_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
