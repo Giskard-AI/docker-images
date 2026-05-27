@@ -6,8 +6,14 @@ FOLDER=$(readlink -f "${BASH_SOURCE[0]}" | xargs dirname)
 
 DEBIAN_VERSION="bookworm"
 DEBIAN_VARIANT="slim"
-# Should be updated regularly, to endforce most recent ubuntu
-UBUNTU_BASE_IMAGE="ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b"
+BASE_IMAGES_FILE="${FOLDER}/base-images.json"
+DEFAULT_UBUNTU_VERSION=$(jq -r '.default' "${BASE_IMAGES_FILE}")
+UBUNTU_BASE_IMAGE=$(jq -r --arg version "${DEFAULT_UBUNTU_VERSION}" '.images[$version]' "${BASE_IMAGES_FILE}")
+
+if [[ "${UBUNTU_BASE_IMAGE}" == "null" || -z "${UBUNTU_BASE_IMAGE}" ]]; then
+    echo "No base image configured for Ubuntu ${DEFAULT_UBUNTU_VERSION}" >&2
+    exit 1
+fi
 
 function install_python() {
     output_file=$1
@@ -67,7 +73,8 @@ for python_version in "3.12" "3.13" "3.14"; do
     output_file="${FOLDER}/Dockerfile_${python_version}"
     echo "# DO NOT MODIFY MANUALLY" >"${output_file}"
     echo "# GENERATED FROM SCRIPTS" >>"${output_file}"
-    echo "FROM ${UBUNTU_BASE_IMAGE}" >>"${output_file}"
+    echo "ARG UBUNTU_BASE_IMAGE=${UBUNTU_BASE_IMAGE}" >>"${output_file}"
+    echo 'FROM ${UBUNTU_BASE_IMAGE}' >>"${output_file}"
     echo '' >>"${output_file}"
 
     echo '# Avoid tzdata interactive action' >>"${output_file}"
