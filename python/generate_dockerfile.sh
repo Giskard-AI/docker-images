@@ -4,7 +4,7 @@ set -euo pipefail
 FOLDER=$(readlink -f "${BASH_SOURCE[0]}" | xargs dirname)
 . "${FOLDER}/../utils/utils.sh"
 
-DEBIAN_VERSION="bookworm"
+DEBIAN_VERSION="trixie"
 DEBIAN_VARIANT="slim"
 BASE_IMAGES_FILE="${FOLDER}/base-images.json"
 DEFAULT_UBUNTU_VERSION=$(jq -r '.default' "${BASE_IMAGES_FILE}")
