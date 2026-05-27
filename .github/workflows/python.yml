@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'python/Dockerfile_*'
+      - 'python/ubuntu*/Dockerfile_*'
       - 'python/base-images.json'
       - 'python/generate_dockerfile.sh'
 
@@ -49,7 +49,7 @@ jobs:
         id: ubuntu
         run: |
           set -euo pipefail
-          image="$(jq -r --arg version "${UBUNTU_VERSION}" '.images[$version]' python/base-images.json)"
+          image="$(jq -r --arg version "${UBUNTU_VERSION}" '.images[$version].image' python/base-images.json)"
           if [ "${image}" = "null" ] || [ -z "${image}" ]; then
             echo "No base image configured for Ubuntu ${UBUNTU_VERSION}" >&2
             exit 1
@@ -61,10 +61,11 @@ jobs:
       - name: Read Python patch version
         id: ver
         run: |
-          pv=$(grep '^ENV PYTHON_VERSION ' "./python/Dockerfile_${VERSION}" | awk '{print $3}')
+          pv=$(grep '^ENV PYTHON_VERSION ' "./python/ubuntu${UBUNTU_VERSION}/Dockerfile_${VERSION}" | awk '{print $3}')
           echo "python_patch=$pv" >> "$GITHUB_OUTPUT"
         env:
           VERSION: ${{ matrix.version }}
+          UBUNTU_VERSION: ${{ matrix.ubuntu.version }}
 
       - name: Docker meta
         id: meta
@@ -104,7 +105,7 @@ jobs:
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: ./python
-          file: ./python/Dockerfile_${{ matrix.version }}
+          file: ./python/ubuntu${{ matrix.ubuntu.version }}/Dockerfile_${{ matrix.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           builder: ${{ steps.builder.outputs.name }}
@@ -164,10 +165,11 @@ jobs:
       - name: Read Python patch version
         id: ver
         run: |
-          pv=$(grep '^ENV PYTHON_VERSION ' "./python/Dockerfile_${VERSION}" | awk '{print $3}')
+          pv=$(grep '^ENV PYTHON_VERSION ' "./python/ubuntu${UBUNTU_VERSION}/Dockerfile_${VERSION}" | awk '{print $3}')
           echo "python_patch=$pv" >> "$GITHUB_OUTPUT"
         env:
           VERSION: ${{ matrix.version }}
+          UBUNTU_VERSION: ${{ matrix.ubuntu.version }}
 
       - name: Docker meta
         id: meta
