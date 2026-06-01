@@ -29,32 +29,34 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
-      - name: Get latest ubuntu 24.04 digest via docker pull
-        id: ubuntu
-        run: |
-          set -euo pipefail
-          pull_output="$(docker pull ubuntu:24.04 2>&1 | tee /dev/stderr)"
-          digest="$(printf '%s\n' "$pull_output" | tr -d '\r' | grep -Eo 'sha256:[0-9a-f]{64}' | head -n1)"
-          if [ -z "${digest:-}" ]; then
-            echo "Failed to parse ubuntu:24.04 digest from docker pull output" >&2
-            exit 1
-          fi
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-
-      - name: Update UBUNTU_BASE_IMAGE if needed
+      - name: Update Ubuntu base image digests
         id: update_ubuntu
         working-directory: python
         run: |
           set -euo pipefail
-          new_line="UBUNTU_BASE_IMAGE=\"ubuntu:24.04@${UBUNTU_DIGEST}\""
-          if grep -q "^${new_line}$" generate_dockerfile.sh; then
+          tmp="$(mktemp)"
+          cp base-images.json "${tmp}"
+
+          for version in 24.04 26.04; do
+            digest="$(docker buildx imagetools inspect "ubuntu:${version}" --format '{{.Digest}}')"
+            if ! printf '%s\n' "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "Failed to parse ubuntu:${version} digest" >&2
+              exit 1
+            fi
+            image="ubuntu:${version}@${digest}"
+            jq --arg version "${version}" --arg image "${image}" \
+              '.images[$version].image = $image' "${tmp}" > "${tmp}.next"
+            mv "${tmp}.next" "${tmp}"
+          done
+
+          if cmp -s base-images.json "${tmp}"; then
             echo "updated=false" >> "$GITHUB_OUTPUT"
           else
-            sed -i -E "0,/^UBUNTU_BASE_IMAGE=/{s|^UBUNTU_BASE_IMAGE=.*$|${new_line}|}" generate_dockerfile.sh
+            mv "${tmp}" base-images.json
             echo "updated=true" >> "$GITHUB_OUTPUT"
           fi
-        env:
-          UBUNTU_DIGEST: ${{ steps.ubuntu.outputs.digest }}
+
+          rm -f "${tmp}" "${tmp}.next"
 
       - name: Try to update dockerfile
         working-directory: python
@@ -64,9 +66,22 @@ jobs:
       - name: Verify Ubuntu digest is pinned in Dockerfiles
         run: |
           set -euo pipefail
-          for f in python/Dockerfile_*; do
-            echo "Checking $f"
-            grep -q '^FROM ubuntu:24\.04@sha256:' "$f"
+          jq -e '.default == "24.04"' python/base-images.json
+          jq -e '.images["24.04"].image | test("^ubuntu:24\\.04@sha256:[0-9a-f]{64}$")' python/base-images.json
+          jq -e '.images["26.04"].image | test("^ubuntu:26\\.04@sha256:[0-9a-f]{64}$")' python/base-images.json
+          jq -e '.images["24.04"].debian_version == "bookworm"' python/base-images.json
+          jq -e '.images["26.04"].debian_version == "trixie"' python/base-images.json
+
+          for version in 24.04 26.04; do
+            image="$(jq -r --arg version "${version}" '.images[$version].image' python/base-images.json)"
+            debian_variant="$(jq -r --arg version "${version}" '.images[$version].debian_variant' python/base-images.json)"
+            debian_version="$(jq -r --arg version "${version}" '.images[$version].debian_version' python/base-images.json)"
+            for f in "python/ubuntu${version}"/Dockerfile_*; do
+              echo "Checking $f"
+              grep -Fq "ARG UBUNTU_BASE_IMAGE=${image}" "$f"
+              grep -Fq "/${debian_variant}-${debian_version}/Dockerfile" "$f"
+              grep -q '^FROM ${UBUNTU_BASE_IMAGE}$' "$f"
+            done
           done
 
       - name: Generate automation token
@@ -82,7 +97,8 @@ jobs:
         with:
           commit-message: Updating to latest python version and ubuntu base digest
           add-paths: |
-            python/Dockerfile_*
+            python/ubuntu*/Dockerfile_*
+            python/base-images.json
             python/generate_dockerfile.sh
           branch: cron-python-update
           title: Updating to latest python version and ubuntu base digest

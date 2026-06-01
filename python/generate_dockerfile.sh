@@ -4,19 +4,18 @@ set -euo pipefail
 FOLDER=$(readlink -f "${BASH_SOURCE[0]}" | xargs dirname)
 . "${FOLDER}/../utils/utils.sh"
 
-DEBIAN_VERSION="bookworm"
-DEBIAN_VARIANT="slim"
-# Should be updated regularly, to endforce most recent ubuntu
-UBUNTU_BASE_IMAGE="ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b"
+BASE_IMAGES_FILE="${FOLDER}/base-images.json"
 
 function install_python() {
     output_file=$1
     python_version=$2
+    debian_variant=$3
+    debian_version=$4
 
     # Creating temp folder and entering it
     temp_folder
 
-    source_url="https://raw.githubusercontent.com/docker-library/python/master/${python_version}/${DEBIAN_VARIANT}-${DEBIAN_VERSION}/Dockerfile"
+    source_url="https://raw.githubusercontent.com/docker-library/python/master/${python_version}/${debian_variant}-${debian_version}/Dockerfile"
     wget --quiet ${source_url}
     # Skip 8 first lines (comment)
     tail -n +8 Dockerfile >Dockerfile_trunc
@@ -63,19 +62,39 @@ function install_python() {
     cleanup_folder
 }
 
-for python_version in "3.12" "3.13" "3.14"; do
-    output_file="${FOLDER}/Dockerfile_${python_version}"
-    echo "# DO NOT MODIFY MANUALLY" >"${output_file}"
-    echo "# GENERATED FROM SCRIPTS" >>"${output_file}"
-    echo "FROM ${UBUNTU_BASE_IMAGE}" >>"${output_file}"
-    echo '' >>"${output_file}"
+ubuntu_versions=$(jq -r '.images | keys[]' "${BASE_IMAGES_FILE}")
+for ubuntu_version in ${ubuntu_versions}; do
+    ubuntu_base_image=$(jq -r --arg version "${ubuntu_version}" '.images[$version].image' "${BASE_IMAGES_FILE}")
+    debian_variant=$(jq -r --arg version "${ubuntu_version}" '.images[$version].debian_variant' "${BASE_IMAGES_FILE}")
+    debian_version=$(jq -r --arg version "${ubuntu_version}" '.images[$version].debian_version' "${BASE_IMAGES_FILE}")
 
-    echo '# Avoid tzdata interactive action' >>"${output_file}"
-    echo 'ENV DEBIAN_FRONTEND noninteractive' >>"${output_file}"
-    echo '' >>"${output_file}"
-    echo "# Adding Python to image" >>"${output_file}"
-    install_python "${output_file}" "${python_version}"
-    echo '' >>"${output_file}"
+    if [[ "${ubuntu_base_image}" == "null" || -z "${ubuntu_base_image}" ]]; then
+        echo "No base image configured for Ubuntu ${ubuntu_version}" >&2
+        exit 1
+    fi
+    if [[ "${debian_variant}" == "null" || -z "${debian_variant}" || "${debian_version}" == "null" || -z "${debian_version}" ]]; then
+        echo "No Debian fragment configured for Ubuntu ${ubuntu_version}" >&2
+        exit 1
+    fi
+
+    output_folder="${FOLDER}/ubuntu${ubuntu_version}"
+    mkdir -p "${output_folder}"
+
+    for python_version in "3.12" "3.13" "3.14"; do
+        output_file="${output_folder}/Dockerfile_${python_version}"
+        echo "# DO NOT MODIFY MANUALLY" >"${output_file}"
+        echo "# GENERATED FROM SCRIPTS" >>"${output_file}"
+        echo "ARG UBUNTU_BASE_IMAGE=${ubuntu_base_image}" >>"${output_file}"
+        echo 'FROM ${UBUNTU_BASE_IMAGE}' >>"${output_file}"
+        echo '' >>"${output_file}"
+
+        echo '# Avoid tzdata interactive action' >>"${output_file}"
+        echo 'ENV DEBIAN_FRONTEND noninteractive' >>"${output_file}"
+        echo '' >>"${output_file}"
+        echo "# Adding Python to image" >>"${output_file}"
+        install_python "${output_file}" "${python_version}" "${debian_variant}" "${debian_version}"
+        echo '' >>"${output_file}"
+    done
 done
 
 echo "Done !"

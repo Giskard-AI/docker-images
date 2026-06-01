@@ -1,6 +1,7 @@
 # DO NOT MODIFY MANUALLY
 # GENERATED FROM SCRIPTS
-FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
+ARG UBUNTU_BASE_IMAGE=ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
+FROM ${UBUNTU_BASE_IMAGE}
 
 # Avoid tzdata interactive action
 ENV DEBIAN_FRONTEND noninteractive
@@ -8,8 +9,8 @@ ENV DEBIAN_FRONTEND noninteractive
 # Adding Python to image
 
 # Dockerfile generated fragment to install Python and Pip
-# Source: https://raw.githubusercontent.com/docker-library/python/master/3.13/slim-bookworm/Dockerfile
-# Python: 3.13.13
+# Source: https://raw.githubusercontent.com/docker-library/python/master/3.14/slim-trixie/Dockerfile
+# Python: 3.14.5
 
 
 # ensure local python is preferred over distribution python
@@ -23,11 +24,10 @@ RUN set -eux; \
 		netbase \
 		tzdata \
 	; \
-	rm -rf /var/lib/apt/lists/*
+	apt-get dist-clean
 
-ENV GPG_KEY 7169605F62C751356D054A26A821E680E5FA6305
-ENV PYTHON_VERSION 3.13.13
-ENV PYTHON_SHA256 2ab91ff401783ccca64f75d10c882e957bdfd60e2bf5a72f8421793729b78a71
+ENV PYTHON_VERSION 3.14.5
+ENV PYTHON_SHA256 7e32597b99e5d9a39abed35de4693fa169df3e5850d4c334337ffd6a19a36db6
 
 RUN set -eux; \
 	\
@@ -48,6 +48,7 @@ RUN set -eux; \
 		libreadline-dev \
 		libsqlite3-dev \
 		libssl-dev \
+		libzstd-dev \
 		make \
 		tk-dev \
 		uuid-dev \
@@ -58,14 +59,6 @@ RUN set -eux; \
 	\
 	wget -O python.tar.xz "https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz"; \
 	echo "$PYTHON_SHA256 *python.tar.xz" | sha256sum -c -; \
-	wget -O python.tar.xz.asc "https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz.asc"; \
-	GNUPGHOME="$(mktemp -d)"; export GNUPGHOME;\
-	# Fix to avoid GPG server problem\
-	echo "disable-ipv6" >> "${GNUPGHOME}/dirmngr.conf"; \
-	gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$GPG_KEY"; \
-	gpg --batch --verify python.tar.xz.asc python.tar.xz; \
-	gpgconf --kill all; \
-	rm -rf "$GNUPGHOME" python.tar.xz.asc; \
 	mkdir -p /usr/src/python; \
 	tar --extract --directory /usr/src/python --strip-components=1 --file python.tar.xz; \
 	rm python.tar.xz; \
@@ -141,7 +134,7 @@ RUN set -eux; \
 		| xargs -I {} sh -c "apt-mark manual {} || echo OK" \
 	; \
 	apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
-	rm -rf /var/lib/apt/lists/*; \
+	apt-get dist-clean; \
 	\
 	export PYTHONDONTWRITEBYTECODE=1; \
 	python3 --version; \
