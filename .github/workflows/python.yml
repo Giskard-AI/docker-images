@@ -62,7 +62,7 @@ jobs:
       - name: Read Python patch version
         id: ver
         run: |
-          pv=$(grep '^ENV PYTHON_VERSION ' "./python/ubuntu${UBUNTU_VERSION}/Dockerfile_${VERSION}-${VARIANT}" | awk '{print $3}')
+          pv=$(grep '^ENV PYTHON_VERSION ' "./python/ubuntu${UBUNTU_VERSION}/Dockerfile_${VERSION}" | awk '{print $3}')
           echo "python_patch=$pv" >> "$GITHUB_OUTPUT"
         env:
           VERSION: ${{ matrix.version }}
@@ -107,7 +107,8 @@ jobs:
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: ./python
-          file: ./python/ubuntu${{ matrix.ubuntu.version }}/Dockerfile_${{ matrix.version }}-${{ matrix.variant }}
+          file: ./python/ubuntu${{ matrix.ubuntu.version }}/Dockerfile_${{ matrix.version }}
+          target: ${{ matrix.variant }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           builder: ${{ steps.builder.outputs.name }}
@@ -169,7 +170,7 @@ jobs:
       - name: Read Python patch version
         id: ver
         run: |
-          pv=$(grep '^ENV PYTHON_VERSION ' "./python/ubuntu${UBUNTU_VERSION}/Dockerfile_${VERSION}-${VARIANT}" | awk '{print $3}')
+          pv=$(grep '^ENV PYTHON_VERSION ' "./python/ubuntu${UBUNTU_VERSION}/Dockerfile_${VERSION}" | awk '{print $3}')
           echo "python_patch=$pv" >> "$GITHUB_OUTPUT"
         env:
           VERSION: ${{ matrix.version }}

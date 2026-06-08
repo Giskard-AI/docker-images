@@ -102,7 +102,7 @@ function append_runtime_image() {
 
     cat >>"${output_file}" <<'EOF'
 
-FROM python-build AS runtime-files
+FROM dev AS runtime-files
 
 RUN set -eux; \
 	rm -rf \
@@ -130,7 +130,7 @@ RUN set -eux; \
 	printf 'root:x:0:\nnogroup:x:65534:\n' > /etc/group; \
 	printf 'hosts: files dns\n' > /etc/nsswitch.conf
 
-FROM scratch
+FROM scratch AS runtime
 
 ENV PATH=/usr/local/bin
 ENV LANG=C.UTF-8
@@ -172,16 +172,11 @@ for ubuntu_version in ${ubuntu_versions}; do
     mkdir -p "${output_folder}"
 
     for python_version in "3.12" "3.13" "3.14"; do
-        dev_output_file="${output_folder}/Dockerfile_${python_version}-dev"
-        write_header "${dev_output_file}" "${ubuntu_base_image}" 'FROM ${UBUNTU_BASE_IMAGE}'
-        install_python "${dev_output_file}" "${python_version}" "${debian_variant}" "${debian_version}"
-        echo '' >>"${dev_output_file}"
-
-        runtime_output_file="${output_folder}/Dockerfile_${python_version}-runtime"
-        write_header "${runtime_output_file}" "${ubuntu_base_image}" 'FROM ${UBUNTU_BASE_IMAGE} AS python-build'
-        install_python "${runtime_output_file}" "${python_version}" "${debian_variant}" "${debian_version}"
-        append_runtime_image "${runtime_output_file}"
-        echo '' >>"${runtime_output_file}"
+        output_file="${output_folder}/Dockerfile_${python_version}"
+        write_header "${output_file}" "${ubuntu_base_image}" 'FROM ${UBUNTU_BASE_IMAGE} AS dev'
+        install_python "${output_file}" "${python_version}" "${debian_variant}" "${debian_version}"
+        append_runtime_image "${output_file}"
+        echo '' >>"${output_file}"
     done
 done
 

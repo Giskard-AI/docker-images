@@ -1,7 +1,7 @@
 # DO NOT MODIFY MANUALLY
 # GENERATED FROM SCRIPTS
 ARG UBUNTU_BASE_IMAGE=ubuntu:24.04@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae77ff1dc54
-FROM ${UBUNTU_BASE_IMAGE} AS python-build
+FROM ${UBUNTU_BASE_IMAGE} AS dev
 
 # Avoid tzdata interactive action
 ENV DEBIAN_FRONTEND noninteractive
@@ -9,8 +9,8 @@ ENV DEBIAN_FRONTEND noninteractive
 # Adding Python
 
 # Dockerfile generated fragment to install Python and Pip
-# Source: https://raw.githubusercontent.com/docker-library/python/master/3.14/slim-bookworm/Dockerfile
-# Python: 3.14.5
+# Source: https://raw.githubusercontent.com/docker-library/python/master/3.13/slim-bookworm/Dockerfile
+# Python: 3.13.13
 
 
 # ensure local python is preferred over distribution python
@@ -26,8 +26,9 @@ RUN set -eux; \
 	; \
 	rm -rf /var/lib/apt/lists/*
 
-ENV PYTHON_VERSION 3.14.5
-ENV PYTHON_SHA256 7e32597b99e5d9a39abed35de4693fa169df3e5850d4c334337ffd6a19a36db6
+ENV GPG_KEY 7169605F62C751356D054A26A821E680E5FA6305
+ENV PYTHON_VERSION 3.13.13
+ENV PYTHON_SHA256 2ab91ff401783ccca64f75d10c882e957bdfd60e2bf5a72f8421793729b78a71
 
 RUN set -eux; \
 	\
@@ -47,7 +48,6 @@ RUN set -eux; \
 		libreadline-dev \
 		libsqlite3-dev \
 		libssl-dev \
-		libzstd-dev \
 		make \
 		uuid-dev \
 		wget \
@@ -57,6 +57,14 @@ RUN set -eux; \
 	\
 	wget -O python.tar.xz "https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz"; \
 	echo "$PYTHON_SHA256 *python.tar.xz" | sha256sum -c -; \
+	wget -O python.tar.xz.asc "https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz.asc"; \
+	GNUPGHOME="$(mktemp -d)"; export GNUPGHOME;\
+	# Fix to avoid GPG server problem\
+	echo "disable-ipv6" >> "${GNUPGHOME}/dirmngr.conf"; \
+	gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$GPG_KEY"; \
+	gpg --batch --verify python.tar.xz.asc python.tar.xz; \
+	gpgconf --kill all; \
+	rm -rf "$GNUPGHOME" python.tar.xz.asc; \
 	mkdir -p /usr/src/python; \
 	tar --extract --directory /usr/src/python --strip-components=1 --file python.tar.xz; \
 	rm python.tar.xz; \
@@ -155,7 +163,7 @@ RUN set -eux; \
 
 
 
-FROM python-build AS runtime-files
+FROM dev AS runtime-files
 
 RUN set -eux; \
 	rm -rf \
@@ -183,7 +191,7 @@ RUN set -eux; \
 	printf 'root:x:0:\nnogroup:x:65534:\n' > /etc/group; \
 	printf 'hosts: files dns\n' > /etc/nsswitch.conf
 
-FROM scratch
+FROM scratch AS runtime
 
 ENV PATH=/usr/local/bin
 ENV LANG=C.UTF-8

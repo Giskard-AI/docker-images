@@ -1,7 +1,7 @@
 # DO NOT MODIFY MANUALLY
 # GENERATED FROM SCRIPTS
-ARG UBUNTU_BASE_IMAGE=ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
-FROM ${UBUNTU_BASE_IMAGE}
+ARG UBUNTU_BASE_IMAGE=ubuntu:24.04@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae77ff1dc54
+FROM ${UBUNTU_BASE_IMAGE} AS dev
 
 # Avoid tzdata interactive action
 ENV DEBIAN_FRONTEND noninteractive
@@ -9,7 +9,7 @@ ENV DEBIAN_FRONTEND noninteractive
 # Adding Python
 
 # Dockerfile generated fragment to install Python and Pip
-# Source: https://raw.githubusercontent.com/docker-library/python/master/3.14/slim-trixie/Dockerfile
+# Source: https://raw.githubusercontent.com/docker-library/python/master/3.14/slim-bookworm/Dockerfile
 # Python: 3.14.5
 
 
@@ -24,7 +24,7 @@ RUN set -eux; \
 		netbase \
 		tzdata \
 	; \
-	apt-get dist-clean
+	rm -rf /var/lib/apt/lists/*
 
 ENV PYTHON_VERSION 3.14.5
 ENV PYTHON_SHA256 7e32597b99e5d9a39abed35de4693fa169df3e5850d4c334337ffd6a19a36db6
@@ -138,7 +138,7 @@ RUN set -eux; \
 		| xargs -I {} sh -c "apt-mark manual {} || echo OK" \
 	; \
 	apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
-	apt-get dist-clean; \
+	rm -rf /var/lib/apt/lists/*; \
 	\
 	export PYTHONDONTWRITEBYTECODE=1; \
 	python3 --version; \
@@ -154,4 +154,53 @@ RUN set -eux; \
 	done
 
 
+
+FROM dev AS runtime-files
+
+RUN set -eux; \
+	rm -rf \
+		/usr/local/bin/2to3* \
+		/usr/local/bin/idle* \
+		/usr/local/bin/pip* \
+		/usr/local/bin/pydoc* \
+		/usr/local/bin/python*-config \
+		/usr/local/lib/python*/config-* \
+		/usr/local/lib/python*/ensurepip \
+		/usr/local/lib/python*/idlelib \
+		/usr/local/lib/python*/lib2to3 \
+		/usr/local/lib/python*/site-packages/pip* \
+		/usr/local/lib/python*/site-packages/setuptools* \
+		/usr/local/lib/python*/site-packages/wheel* \
+		/usr/local/lib/python*/tkinter \
+		/usr/local/lib/python*/turtledemo \
+	; \
+	find /usr/local -depth \
+		\( \
+			\( -type d -a \( -name __pycache__ -o -name test -o -name tests -o -name idle_test \) \) \
+			-o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' -o -name '_test*.so' -o -name '_ctypes_test*.so' -o -name '_xxtestfuzz*.so' -o -name 'xx*.so' \) \) \
+		\) -exec rm -rf '{}' +; \
+	printf 'root:x:0:0:root:/root:/sbin/nologin\nnobody:x:65534:65534:nobody:/nonexistent:/sbin/nologin\n' > /etc/passwd; \
+	printf 'root:x:0:\nnogroup:x:65534:\n' > /etc/group; \
+	printf 'hosts: files dns\n' > /etc/nsswitch.conf
+
+FROM scratch AS runtime
+
+ENV PATH=/usr/local/bin
+ENV LANG=C.UTF-8
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV PYTHONDONTWRITEBYTECODE=1
+
+COPY --from=runtime-files /usr/local /usr/local
+COPY --from=runtime-files /lib /lib
+COPY --from=runtime-files /lib64 /lib64
+COPY --from=runtime-files /usr/lib /usr/lib
+COPY --from=runtime-files /etc/passwd /etc/passwd
+COPY --from=runtime-files /etc/group /etc/group
+COPY --from=runtime-files /etc/nsswitch.conf /etc/nsswitch.conf
+COPY --from=runtime-files /etc/protocols /etc/protocols
+COPY --from=runtime-files /etc/services /etc/services
+COPY --from=runtime-files /etc/ssl/certs /etc/ssl/certs
+COPY --from=runtime-files /usr/share/zoneinfo /usr/share/zoneinfo
+
+ENTRYPOINT ["python3"]
 
