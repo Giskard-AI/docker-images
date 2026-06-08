@@ -42,6 +42,11 @@ function install_python() {
 
     cat Dockerfile_trunc >>"${output_file}"
 
+    # Drop optional CPython extension build dependencies that this base image
+    # does not need: Bluetooth socket support and tkinter/Tk bindings.
+    sed -i -e '/^[[:space:]]*libbluetooth-dev \\$/d' "${output_file}"
+    sed -i -e '/^[[:space:]]*tk-dev \\$/d' "${output_file}"
+
     # Now, to avoid GPG problems
     # https://github.com/f-secure-foundry/usbarmory-debian-base_image/issues/9
     sed -i -e 's|GNUPGHOME="$(mktemp -d)"; export GNUPGHOME;|GNUPGHOME="$(mktemp -d)"; export GNUPGHOME;\\\n\t# Fix to avoid GPG server problem\\\n\techo "disable-ipv6" >> "${GNUPGHOME}\/dirmngr.conf";|'  "${output_file}"

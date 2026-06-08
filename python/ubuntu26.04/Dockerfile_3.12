@@ -43,7 +43,6 @@ RUN set -eux; \
 		dpkg-dev \
 		gcc \
 		gnupg \
-		libbluetooth-dev \
 		libbz2-dev \
 		libc6-dev \
 		libdb-dev \
@@ -55,7 +54,6 @@ RUN set -eux; \
 		libsqlite3-dev \
 		libssl-dev \
 		make \
-		tk-dev \
 		uuid-dev \
 		wget \
 		xz-utils \
@@ -161,6 +159,5 @@ RUN set -eux; \
 		[ ! -e "/usr/local/bin/$dst" ]; \
 		ln -svT "$src" "/usr/local/bin/$dst"; \
 	done
-
 
 
