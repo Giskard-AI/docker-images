@@ -6,6 +6,22 @@ FOLDER=$(readlink -f "${BASH_SOURCE[0]}" | xargs dirname)
 
 BASE_IMAGES_FILE="${FOLDER}/base-images.json"
 
+function apply_python_cleanup() {
+    output_file=$1
+
+    sed -i -e '/^[[:space:]]*libbluetooth-dev \\$/d' "${output_file}"
+    sed -i -e '/^[[:space:]]*tk-dev \\$/d' "${output_file}"
+    sed -i -e '/^[[:space:]]*--enable-shared \\/a\
+		--disable-test-modules \\' "${output_file}"
+    sed -i -e '/^[[:space:]]*make install; \\/a\
+	find /usr/local -depth \\\
+		\\( \\\
+			\\( -type d -a \\( -name idlelib -o -name tkinter -o -name turtledemo \\) \\) \\\
+			-o \\( -type f -a \\( -name "idle3*" -o -name "_test*.so" -o -name "_ctypes_test*.so" -o -name "_xxtestfuzz*.so" -o -name "xx*.so" \\) \\) \\\
+		\\) -exec rm -rf "{}" +; \\' "${output_file}"
+    sed -i -e 's/for src in idle3 pip3 pydoc3 python3 python3-config; do/for src in pip3 pydoc3 python3 python3-config; do/' "${output_file}"
+}
+
 function install_python() {
     output_file=$1
     python_version=$2
@@ -42,6 +58,8 @@ function install_python() {
 
     cat Dockerfile_trunc >>"${output_file}"
 
+    apply_python_cleanup "${output_file}"
+
     # Now, to avoid GPG problems
     # https://github.com/f-secure-foundry/usbarmory-debian-base_image/issues/9
     sed -i -e 's|GNUPGHOME="$(mktemp -d)"; export GNUPGHOME;|GNUPGHOME="$(mktemp -d)"; export GNUPGHOME;\\\n\t# Fix to avoid GPG server problem\\\n\techo "disable-ipv6" >> "${GNUPGHOME}\/dirmngr.conf";|'  "${output_file}"
@@ -60,6 +78,79 @@ function install_python() {
 
     # Exiting temp folder and removing it
     cleanup_folder
+}
+
+function write_header() {
+    output_file=$1
+    ubuntu_base_image=$2
+    from_line=$3
+
+    echo "# DO NOT MODIFY MANUALLY" >"${output_file}"
+    echo "# GENERATED FROM SCRIPTS" >>"${output_file}"
+    echo "ARG UBUNTU_BASE_IMAGE=${ubuntu_base_image}" >>"${output_file}"
+    echo "${from_line}" >>"${output_file}"
+    echo '' >>"${output_file}"
+
+    echo '# Avoid tzdata interactive action' >>"${output_file}"
+    echo 'ENV DEBIAN_FRONTEND noninteractive' >>"${output_file}"
+    echo '' >>"${output_file}"
+    echo "# Adding Python" >>"${output_file}"
+}
+
+function append_runtime_image() {
+    output_file=$1
+
+    cat >>"${output_file}" <<'EOF'
+
+FROM python-build AS runtime-files
+
+RUN set -eux; \
+	rm -rf \
+		/usr/local/bin/2to3* \
+		/usr/local/bin/idle* \
+		/usr/local/bin/pip* \
+		/usr/local/bin/pydoc* \
+		/usr/local/bin/python*-config \
+		/usr/local/lib/python*/config-* \
+		/usr/local/lib/python*/ensurepip \
+		/usr/local/lib/python*/idlelib \
+		/usr/local/lib/python*/lib2to3 \
+		/usr/local/lib/python*/site-packages/pip* \
+		/usr/local/lib/python*/site-packages/setuptools* \
+		/usr/local/lib/python*/site-packages/wheel* \
+		/usr/local/lib/python*/tkinter \
+		/usr/local/lib/python*/turtledemo \
+	; \
+	find /usr/local -depth \
+		\( \
+			\( -type d -a \( -name __pycache__ -o -name test -o -name tests -o -name idle_test \) \) \
+			-o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' -o -name '_test*.so' -o -name '_ctypes_test*.so' -o -name '_xxtestfuzz*.so' -o -name 'xx*.so' \) \) \
+		\) -exec rm -rf '{}' +; \
+	printf 'root:x:0:0:root:/root:/sbin/nologin\nnobody:x:65534:65534:nobody:/nonexistent:/sbin/nologin\n' > /etc/passwd; \
+	printf 'root:x:0:\nnogroup:x:65534:\n' > /etc/group; \
+	printf 'hosts: files dns\n' > /etc/nsswitch.conf
+
+FROM scratch
+
+ENV PATH=/usr/local/bin
+ENV LANG=C.UTF-8
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV PYTHONDONTWRITEBYTECODE=1
+
+COPY --from=runtime-files /usr/local /usr/local
+COPY --from=runtime-files /lib /lib
+COPY --from=runtime-files /lib64 /lib64
+COPY --from=runtime-files /usr/lib /usr/lib
+COPY --from=runtime-files /etc/passwd /etc/passwd
+COPY --from=runtime-files /etc/group /etc/group
+COPY --from=runtime-files /etc/nsswitch.conf /etc/nsswitch.conf
+COPY --from=runtime-files /etc/protocols /etc/protocols
+COPY --from=runtime-files /etc/services /etc/services
+COPY --from=runtime-files /etc/ssl/certs /etc/ssl/certs
+COPY --from=runtime-files /usr/share/zoneinfo /usr/share/zoneinfo
+
+ENTRYPOINT ["python3"]
+EOF
 }
 
 ubuntu_versions=$(jq -r '.images | keys[]' "${BASE_IMAGES_FILE}")
@@ -81,19 +172,16 @@ for ubuntu_version in ${ubuntu_versions}; do
     mkdir -p "${output_folder}"
 
     for python_version in "3.12" "3.13" "3.14"; do
-        output_file="${output_folder}/Dockerfile_${python_version}"
-        echo "# DO NOT MODIFY MANUALLY" >"${output_file}"
-        echo "# GENERATED FROM SCRIPTS" >>"${output_file}"
-        echo "ARG UBUNTU_BASE_IMAGE=${ubuntu_base_image}" >>"${output_file}"
-        echo 'FROM ${UBUNTU_BASE_IMAGE}' >>"${output_file}"
-        echo '' >>"${output_file}"
+        dev_output_file="${output_folder}/Dockerfile_${python_version}-dev"
+        write_header "${dev_output_file}" "${ubuntu_base_image}" 'FROM ${UBUNTU_BASE_IMAGE}'
+        install_python "${dev_output_file}" "${python_version}" "${debian_variant}" "${debian_version}"
+        echo '' >>"${dev_output_file}"
 
-        echo '# Avoid tzdata interactive action' >>"${output_file}"
-        echo 'ENV DEBIAN_FRONTEND noninteractive' >>"${output_file}"
-        echo '' >>"${output_file}"
-        echo "# Adding Python to image" >>"${output_file}"
-        install_python "${output_file}" "${python_version}" "${debian_variant}" "${debian_version}"
-        echo '' >>"${output_file}"
+        runtime_output_file="${output_folder}/Dockerfile_${python_version}-runtime"
+        write_header "${runtime_output_file}" "${ubuntu_base_image}" 'FROM ${UBUNTU_BASE_IMAGE} AS python-build'
+        install_python "${runtime_output_file}" "${python_version}" "${debian_variant}" "${debian_version}"
+        append_runtime_image "${runtime_output_file}"
+        echo '' >>"${runtime_output_file}"
     done
 done
 
