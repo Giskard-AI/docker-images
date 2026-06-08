@@ -38,7 +38,7 @@ jobs:
           cp base-images.json "${tmp}"
 
           for version in 24.04 26.04; do
-            digest="$(docker buildx imagetools inspect "ubuntu:${version}" --format '{{.Digest}}')"
+            digest="$(docker buildx imagetools inspect "ubuntu:${version}" --format '{{.Manifest.Digest}}')"
             if ! printf '%s\n' "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
               echo "Failed to parse ubuntu:${version} digest" >&2
               exit 1
