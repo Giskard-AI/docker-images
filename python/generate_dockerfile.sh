@@ -105,6 +105,7 @@ function append_runtime_image() {
 FROM dev AS runtime-files
 
 RUN set -eux; \
+	mkdir -p /lib64; \
 	rm -rf \
 		/usr/local/bin/2to3* \
 		/usr/local/bin/idle* \
