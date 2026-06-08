@@ -8,6 +8,12 @@ on:
       - 'python/ubuntu*/Dockerfile_*'
       - 'python/base-images.json'
       - 'python/generate_dockerfile.sh'
+  pull_request:
+    paths:
+      - 'python/ubuntu*/Dockerfile_*'
+      - 'python/base-images.json'
+      - 'python/generate_dockerfile.sh'
+      - '.github/workflows/python.yml'
 
 permissions: {}
 
@@ -20,6 +26,7 @@ env:
 
 jobs:
   build:
+    if: github.event_name == 'push'
     name: Build ${{ matrix.version }}-${{ matrix.variant }} on Ubuntu ${{ matrix.ubuntu.version }} (${{ matrix.platform }})
     strategy:
       matrix:
@@ -135,6 +142,7 @@ jobs:
           retention-days: 1
 
   merge:
+    if: github.event_name == 'push'
     name: Merge manifests (${{ matrix.version }}-${{ matrix.variant }} on Ubuntu ${{ matrix.ubuntu.version }})
     strategy:
       matrix:
@@ -221,3 +229,240 @@ jobs:
           docker buildx imagetools inspect "${REGISTRY_IMAGE_PREFIX}python:${META_VERSION}"
         env:
           META_VERSION: ${{ steps.meta.outputs.version }}
+
+  verify-pr:
+    name: Verify PR image flow (${{ matrix.version }}-${{ matrix.variant }} on Ubuntu ${{ matrix.ubuntu.version }} / ${{ matrix.platform.name }})
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      matrix:
+        version: ["3.12", "3.13", "3.14"]
+        variant: ["dev", "runtime"]
+        ubuntu:
+          - version: "24.04"
+            default: true
+          - version: "26.04"
+            default: false
+        platform:
+          - name: amd64
+            runner: blacksmith-2vcpu-ubuntu-2404
+            docker: linux/amd64
+          - name: arm64
+            runner: blacksmith-2vcpu-ubuntu-2404-arm
+            docker: linux/arm64
+      fail-fast: false
+    runs-on: ${{ matrix.platform.runner }}
+    permissions:
+      contents: read # clone repo
+      id-token: write # OIDC token for keyless signing
+      attestations: write # generate provenance attestations
+      security-events: write # upload Trivy SARIF results for trusted PRs
+    services:
+      registry:
+        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373 # v2
+        ports:
+          - 5000:5000
+    env:
+      REGISTRY_IMAGE_PREFIX: "localhost:5000/giskard/"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        with:
+          driver-opts: network=host
+
+      - name: Read Ubuntu base image
+        id: ubuntu
+        run: |
+          set -euo pipefail
+          image="$(jq -r --arg version "${UBUNTU_VERSION}" '.images[$version].image' python/base-images.json)"
+          if [ "${image}" = "null" ] || [ -z "${image}" ]; then
+            echo "No base image configured for Ubuntu ${UBUNTU_VERSION}" >&2
+            exit 1
+          fi
+          echo "base_image=${image}" >> "$GITHUB_OUTPUT"
+        env:
+          UBUNTU_VERSION: ${{ matrix.ubuntu.version }}
+
+      - name: Read Python patch version
+        id: ver
+        run: |
+          pv=$(grep '^ENV PYTHON_VERSION ' "./python/ubuntu${UBUNTU_VERSION}/Dockerfile_${VERSION}" | awk '{print $3}')
+          echo "python_patch=$pv" >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ matrix.version }}
+          UBUNTU_VERSION: ${{ matrix.ubuntu.version }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
+        with:
+          tags: |
+            type=raw,enable=${{ matrix.ubuntu.default }},value=${{ matrix.version }}-${{ matrix.variant }}-${{ matrix.platform.name }}
+            type=raw,enable=${{ matrix.ubuntu.default }},value=${{ steps.ver.outputs.python_patch }}-${{ matrix.variant }}-${{ matrix.platform.name }}
+            type=raw,value=${{ matrix.version }}-${{ matrix.variant }}-ubuntu${{ matrix.ubuntu.version }}-${{ matrix.platform.name }}
+            type=raw,value=${{ steps.ver.outputs.python_patch }}-${{ matrix.variant }}-ubuntu${{ matrix.ubuntu.version }}-${{ matrix.platform.name }}
+          images: |
+            ${{ env.REGISTRY_IMAGE_PREFIX }}python
+          flavor: |
+            latest=false
+
+      - name: Build and push to local registry
+        id: push
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: ./python
+          file: ./python/ubuntu${{ matrix.ubuntu.version }}/Dockerfile_${{ matrix.version }}
+          target: ${{ matrix.variant }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            UBUNTU_BASE_IMAGE=${{ steps.ubuntu.outputs.base_image }}
+          platforms: ${{ matrix.platform.docker }}
+          push: true
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect "${REGISTRY_IMAGE_PREFIX}python:${META_VERSION}"
+        env:
+          META_VERSION: ${{ steps.meta.outputs.version }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      - name: Extract local image metadata
+        id: image
+        run: |
+          set -euo pipefail
+
+          subject_name="${REGISTRY_IMAGE_PREFIX}python"
+          jq -r '.tags[]' <<< "${DOCKER_METADATA_OUTPUT_JSON}" > image-tags.txt
+
+          if [ ! -s image-tags.txt ]; then
+            echo "No image tags found in Docker metadata output" >&2
+            exit 1
+          fi
+
+          first_tag="$(head -n 1 image-tags.txt)"
+          digest="${PUSH_DIGEST}"
+          if ! printf '%s\n' "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "Failed to resolve image digest for ${first_tag}: ${digest}" >&2
+            exit 1
+          fi
+
+          {
+            echo "subject_name=${subject_name}"
+            echo "digest=${digest}"
+            echo "digest_ref=${subject_name}@${digest}"
+          } >> "$GITHUB_OUTPUT"
+        env:
+          PUSH_DIGEST: ${{ steps.push.outputs.digest }}
+
+      - name: Generate image SBOM
+        run: |
+          set -euo pipefail
+          syft "${DIGEST_REF}" \
+            --source-name "${SUBJECT_NAME}:${PLATFORM}" \
+            --source-version "${DIGEST}" \
+            -o "spdx-json=sbom.spdx.json"
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+          DIGEST_REF: ${{ steps.image.outputs.digest_ref }}
+          PLATFORM: ${{ matrix.platform.docker }}
+          SUBJECT_NAME: ${{ steps.image.outputs.subject_name }}
+
+      - name: Sign local image tags
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r image_ref; do
+            cosign sign --yes --allow-insecure-registry "${image_ref}"
+          done < image-tags.txt
+
+      - name: Attach local SBOM attestation
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r image_ref; do
+            cosign attest --yes \
+              --allow-insecure-registry \
+              --predicate sbom.spdx.json \
+              --type spdxjson \
+              "${image_ref}"
+          done < image-tags.txt
+
+      - name: Attest local build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ${{ steps.image.outputs.subject_name }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: false
+
+      - name: Verify local signatures and SBOM attestations
+        run: |
+          set -euo pipefail
+
+          if [ ! -s sbom.spdx.json ]; then
+            echo "No SBOM file was generated" >&2
+            exit 1
+          fi
+
+          while IFS= read -r image_ref; do
+            cosign verify \
+              --allow-insecure-registry \
+              --certificate-identity-regexp "${CERTIFICATE_IDENTITY_REGEXP}" \
+              --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+              "${image_ref}" > /dev/null
+
+            actual_attestations="$(cosign verify-attestation \
+              --allow-insecure-registry \
+              --type spdxjson \
+              --certificate-identity-regexp "${CERTIFICATE_IDENTITY_REGEXP}" \
+              --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+              "${image_ref}" | wc -l)"
+
+            if [ "${actual_attestations}" -lt 1 ]; then
+              echo "Expected at least one SPDX JSON attestation for ${image_ref}, found ${actual_attestations}" >&2
+              exit 1
+            fi
+          done < image-tags.txt
+        env:
+          CERTIFICATE_IDENTITY_REGEXP: ^https://github\.com/Giskard-AI/docker-images/\.github/workflows/python\.yml@refs/pull/[0-9]+/merge$
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+
+      - name: Run Trivy SARIF scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.image.outputs.digest_ref }}
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: '0'
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          vuln-type: os,library
+        env:
+          TRIVY_INSECURE: true
+
+      - name: Upload Trivy SARIF results
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
+        with:
+          sarif_file: trivy-results.sarif
+          category: pr-python-${{ matrix.version }}-${{ matrix.variant }}-ubuntu${{ matrix.ubuntu.version }}-${{ matrix.platform.name }}
+
+      - name: Run Trivy vulnerability gate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.image.outputs.digest_ref }}
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          vuln-type: os,library
+        env:
+          TRIVY_INSECURE: true
