@@ -155,16 +155,20 @@ RUN set -eux; \
 
 
 
+# Build a small root filesystem for the runtime image.
+# The runtime keeps Python and the shared libraries it needs, but not apt/dpkg,
+# shells, pip, headers, tests, or other build/debug-only files.
 FROM dev AS runtime-files
 
 RUN set -eux; \
-	mkdir -p /lib64; \
 	rm -rf \
 		/usr/local/bin/2to3* \
 		/usr/local/bin/idle* \
 		/usr/local/bin/pip* \
 		/usr/local/bin/pydoc* \
 		/usr/local/bin/python*-config \
+		/usr/local/include \
+		/usr/local/lib/pkgconfig \
 		/usr/local/lib/python*/config-* \
 		/usr/local/lib/python*/ensurepip \
 		/usr/local/lib/python*/idlelib \
@@ -173,13 +177,33 @@ RUN set -eux; \
 		/usr/local/lib/python*/site-packages/setuptools* \
 		/usr/local/lib/python*/site-packages/wheel* \
 		/usr/local/lib/python*/tkinter \
+		/usr/local/lib/python*/turtle.py \
 		/usr/local/lib/python*/turtledemo \
+		/usr/local/lib/python*/venv \
+		/usr/local/lib/python*/__phello__ \
+		/usr/local/share/man \
 	; \
 	find /usr/local -depth \
 		\( \
 			\( -type d -a \( -name __pycache__ -o -name test -o -name tests -o -name idle_test \) \) \
 			-o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' -o -name '_test*.so' -o -name '_ctypes_test*.so' -o -name '_xxtestfuzz*.so' -o -name 'xx*.so' \) \) \
 		\) -exec rm -rf '{}' +; \
+	# Keep merged-usr semantics in scratch without copying /usr/lib twice. \
+	mkdir -p /runtime-root/usr; \
+	ln -s ../lib /runtime-root/usr/lib; \
+	ln -s ../lib64 /runtime-root/usr/lib64; \
+	# Scratch has no default /tmp; keep it root-owned and world-writable. \
+	mkdir -m 1777 /runtime-root/tmp; \
+	# Copy only shared libraries required by Python and stdlib native modules. \
+	find /usr/local/bin /usr/local/lib -type f \( -perm /111 -o -name '*.so*' \) -exec ldd '{}' ';' \
+		| awk '/=> \// { print $(NF - 1) } $1 ~ /^\// { print $1 }' \
+		| sort -u \
+		| while read -r lib; do cp -L --parents "${lib}" /runtime-root; done; \
+	# Keep common native-wheel and DNS/NSS runtime libraries that ldd on CPython \
+	# cannot see, but downstream wheels and hostname resolution may need. \
+	for lib in /lib/*/libdl.so.2 /lib/*/libgcc_s.so.1 /lib/*/libpthread.so.0 /lib/*/librt.so.1 /lib/*/libstdc++.so.6 /lib/*/libutil.so.1 /lib/*/libnss_dns.so.2 /lib/*/libnss_files.so.2 /lib/*/libresolv.so.2; do \
+		if [ -e "${lib}" ]; then cp -L --parents "${lib}" /runtime-root; fi; \
+	done; \
 	printf 'root:x:0:0:root:/root:/sbin/nologin\nnobody:x:65534:65534:nobody:/nonexistent:/sbin/nologin\n' > /etc/passwd; \
 	printf 'root:x:0:\nnogroup:x:65534:\n' > /etc/group; \
 	printf 'hosts: files dns\n' > /etc/nsswitch.conf
@@ -192,9 +216,8 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV PYTHONDONTWRITEBYTECODE=1
 
 COPY --from=runtime-files /usr/local /usr/local
-COPY --from=runtime-files /lib /lib
-COPY --from=runtime-files /lib64 /lib64
-COPY --from=runtime-files /usr/lib /usr/lib
+# Runtime shared libraries and merged-usr symlinks harvested above.
+COPY --from=runtime-files /runtime-root /
 COPY --from=runtime-files /etc/passwd /etc/passwd
 COPY --from=runtime-files /etc/group /etc/group
 COPY --from=runtime-files /etc/nsswitch.conf /etc/nsswitch.conf
