@@ -448,6 +448,9 @@ jobs:
           vuln-type: os,library
         env:
           TRIVY_INSECURE: true
+          # The runtime image is scratch-based, so pass the known Ubuntu base
+          # version to make OS package matching use the minimal dpkg metadata.
+          TRIVY_DISTRO: ubuntu/${{ matrix.ubuntu.version }}
 
       - name: Upload Trivy SARIF results
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
@@ -466,3 +469,5 @@ jobs:
           vuln-type: os,library
         env:
           TRIVY_INSECURE: true
+          # Keep the report aligned with the SARIF scan above.
+          TRIVY_DISTRO: ubuntu/${{ matrix.ubuntu.version }}

@@ -196,9 +196,9 @@ RUN set -eux; \
 			\( -type d -a \( -name __pycache__ -o -name test -o -name tests -o -name idle_test \) \) \
 			-o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' -o -name '_test*.so' -o -name '_ctypes_test*.so' -o -name '_xxtestfuzz*.so' -o -name 'xx*.so' \) \) \
 		\) -exec rm -rf '{}' +; \
-	# Keep merged-usr semantics in scratch without copying /usr/lib twice. \
-	mkdir -p /runtime-root/usr; \
-	ln -s ../lib /runtime-root/usr/lib; \
+	# Keep merged-usr compatibility without copying /usr/lib twice. \
+	# /usr/lib stays real so scanners can read /usr/lib/os-release. \
+	mkdir -p /runtime-root/usr/lib; \
 	ln -s ../lib64 /runtime-root/usr/lib64; \
 	# Scratch has no default /tmp; keep it root-owned and world-writable. \
 	mkdir -m 1777 /runtime-root/tmp; \
@@ -212,6 +212,32 @@ RUN set -eux; \
 	for lib in /lib/*/libdl.so.2 /lib/*/libgcc_s.so.1 /lib/*/libpthread.so.0 /lib/*/librt.so.1 /lib/*/libstdc++.so.6 /lib/*/libutil.so.1 /lib/*/libnss_dns.so.2 /lib/*/libnss_files.so.2 /lib/*/libresolv.so.2; do \
 		if [ -e "${lib}" ]; then cp -L --parents "${lib}" /runtime-root; fi; \
 	done; \
+	find /runtime-root/lib -mindepth 1 -maxdepth 1 -type d \
+		| while read -r lib_dir; do ln -s "../../lib/$(basename "${lib_dir}")" "/runtime-root/usr/lib/$(basename "${lib_dir}")"; done; \
+	# Keep minimal Ubuntu package metadata for scanners such as Trivy. \
+	# Only packages owning copied runtime files are listed, not the full dev image. \
+	mkdir -p /runtime-root/etc /runtime-root/var/lib/dpkg; \
+	cp /usr/lib/os-release /runtime-root/usr/lib/os-release; \
+	ln -s ../usr/lib/os-release /runtime-root/etc/os-release; \
+	: > /tmp/runtime-packages.list; \
+	find /runtime-root -type f \
+		| sed 's#^/runtime-root##' \
+		| while read -r path; do \
+			for query_path in "${path}" "/usr${path}"; do \
+				if [ "${query_path}" != "${path}" ]; then \
+					case "${path}" in /bin/*|/lib/*|/lib64/*|/sbin/*) ;; *) continue ;; esac; \
+				fi; \
+				if dpkg-query --search "${query_path}" > /tmp/dpkg-query.out 2>/dev/null; then \
+					awk -F': ' '/^[A-Za-z0-9][A-Za-z0-9+.-]*(:[A-Za-z0-9][A-Za-z0-9+.-]*)?: / { print $1 }' /tmp/dpkg-query.out > /tmp/dpkg-query.packages; \
+					if [ -s /tmp/dpkg-query.packages ]; then cat /tmp/dpkg-query.packages; break; fi; \
+				fi; \
+			done; \
+		done \
+		| sed 's/:.*//' \
+		| sort -u > /tmp/runtime-packages.list; \
+	awk 'BEGIN { while ((getline pkg < "/tmp/runtime-packages.list") > 0) wanted[pkg] = 1; RS = ""; ORS = "\n\n" } { package = ""; n = split($0, lines, "\n"); for (i = 1; i <= n; i++) { if (lines[i] ~ /^Package: /) { package = substr(lines[i], 10); break } } if (package in wanted) print }' /var/lib/dpkg/status > /runtime-root/var/lib/dpkg/status; \
+	: > /runtime-root/var/lib/dpkg/available; \
+	rm -f /tmp/runtime-packages.list /tmp/dpkg-query.out /tmp/dpkg-query.packages; \
 	printf 'root:x:0:0:root:/root:/sbin/nologin\nnobody:x:65534:65534:nobody:/nonexistent:/sbin/nologin\n' > /etc/passwd; \
 	printf 'root:x:0:\nnogroup:x:65534:\n' > /etc/group; \
 	printf 'hosts: files dns\n' > /etc/nsswitch.conf
@@ -235,4 +261,3 @@ COPY --from=runtime-files /etc/ssl/certs /etc/ssl/certs
 COPY --from=runtime-files /usr/share/zoneinfo /usr/share/zoneinfo
 
 ENTRYPOINT ["python3"]
-
