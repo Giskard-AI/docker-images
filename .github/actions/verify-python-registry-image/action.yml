@@ -1,0 +1,177 @@
+name: Verify Python registry image
+description: Verify a Python image pushed to the job-local registry.
+
+inputs:
+  variant:
+    required: true
+    description: Image variant.
+  registry-image-prefix:
+    required: true
+    description: Registry image prefix.
+  tags-file:
+    required: true
+    description: File containing full image tags.
+  digest:
+    required: true
+    description: Image digest.
+  platform:
+    required: true
+    description: Docker platform.
+  certificate-identity-regexp:
+    required: true
+    description: Expected cosign certificate identity regexp.
+  certificate-oidc-issuer:
+    required: true
+    description: Expected cosign OIDC issuer.
+  trivy-distro:
+    required: true
+    description: Distro override for Trivy OS package matching.
+  sarif-category:
+    required: true
+    description: Code scanning SARIF category.
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare image metadata
+      id: image
+      shell: bash
+      env:
+        DIGEST: ${{ inputs.digest }}
+        REGISTRY_IMAGE_PREFIX: ${{ inputs.registry-image-prefix }}
+        TAGS_FILE: ${{ inputs.tags-file }}
+        VARIANT: ${{ inputs.variant }}
+      run: |
+        set -euo pipefail
+
+        subject_name="${REGISTRY_IMAGE_PREFIX}python"
+        workspace_tags_file="image-tags-${VARIANT}.txt"
+        cp "${TAGS_FILE}" "${workspace_tags_file}"
+
+        if [ ! -s "${workspace_tags_file}" ]; then
+          echo "No image tags found at ${workspace_tags_file}" >&2
+          exit 1
+        fi
+
+        first_tag="$(head -n 1 "${workspace_tags_file}")"
+        if ! printf '%s\n' "${DIGEST}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+          echo "Failed to resolve image digest for ${first_tag}: ${DIGEST}" >&2
+          exit 1
+        fi
+
+        {
+          echo "subject_name=${subject_name}"
+          echo "digest_ref=${subject_name}@${DIGEST}"
+          echo "tags_file=${workspace_tags_file}"
+          echo "sbom_file=sbom-${VARIANT}.spdx.json"
+          echo "sarif_file=trivy-results-${VARIANT}.sarif"
+        } >> "${GITHUB_OUTPUT}"
+
+    - name: Attest local build provenance
+      uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+      with:
+        subject-name: ${{ steps.image.outputs.subject_name }}
+        subject-digest: ${{ inputs.digest }}
+        push-to-registry: false
+
+    - name: Generate SBOM
+      shell: bash
+      env:
+        DIGEST: ${{ inputs.digest }}
+        DIGEST_REF: ${{ steps.image.outputs.digest_ref }}
+        PLATFORM: ${{ inputs.platform }}
+        SBOM_FILE: ${{ steps.image.outputs.sbom_file }}
+        SUBJECT_NAME: ${{ steps.image.outputs.subject_name }}
+      run: |
+        set -euo pipefail
+        syft "${DIGEST_REF}" \
+          --source-name "${SUBJECT_NAME}:${PLATFORM}" \
+          --source-version "${DIGEST}" \
+          -o "spdx-json=${SBOM_FILE}"
+
+    - name: Sign and attach SBOM attestation
+      shell: bash
+      env:
+        DIGEST_REF: ${{ steps.image.outputs.digest_ref }}
+        SBOM_FILE: ${{ steps.image.outputs.sbom_file }}
+      run: |
+        set -euo pipefail
+        cosign sign --yes --allow-insecure-registry "${DIGEST_REF}"
+        cosign attest --yes \
+          --allow-insecure-registry \
+          --predicate "${SBOM_FILE}" \
+          --type spdxjson \
+          "${DIGEST_REF}"
+
+    - name: Verify signatures and SBOM attestations
+      shell: bash
+      env:
+        CERTIFICATE_IDENTITY_REGEXP: ${{ inputs.certificate-identity-regexp }}
+        CERTIFICATE_OIDC_ISSUER: ${{ inputs.certificate-oidc-issuer }}
+        SBOM_FILE: ${{ steps.image.outputs.sbom_file }}
+        TAGS_FILE: ${{ steps.image.outputs.tags_file }}
+      run: |
+        set -euo pipefail
+
+        if [ ! -s "${SBOM_FILE}" ]; then
+          echo "No SBOM file was generated" >&2
+          exit 1
+        fi
+
+        while IFS= read -r image_ref; do
+          cosign verify \
+            --allow-insecure-registry \
+            --certificate-identity-regexp "${CERTIFICATE_IDENTITY_REGEXP}" \
+            --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+            "${image_ref}" > /dev/null
+
+          actual_attestations="$(cosign verify-attestation \
+            --allow-insecure-registry \
+            --type spdxjson \
+            --certificate-identity-regexp "${CERTIFICATE_IDENTITY_REGEXP}" \
+            --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+            "${image_ref}" | wc -l)"
+
+          if [ "${actual_attestations}" -lt 1 ]; then
+            echo "Expected at least one SPDX JSON attestation for ${image_ref}, found ${actual_attestations}" >&2
+            exit 1
+          fi
+        done < "${TAGS_FILE}"
+
+    - name: Run Trivy SARIF scan
+      shell: bash
+      env:
+        DIGEST_REF: ${{ steps.image.outputs.digest_ref }}
+        TRIVY_DISTRO: ${{ inputs.trivy-distro }}
+        TRIVY_INSECURE: true
+        SARIF_FILE: ${{ steps.image.outputs.sarif_file }}
+      run: |
+        set -euo pipefail
+        trivy image \
+          --format sarif \
+          --output "${SARIF_FILE}" \
+          --exit-code 0 \
+          --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+          --vuln-type os,library \
+          "${DIGEST_REF}"
+
+    - name: Upload Trivy SARIF results
+      uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
+      with:
+        sarif_file: ${{ steps.image.outputs.sarif_file }}
+        category: ${{ inputs.sarif-category }}
+
+    - name: Run Trivy HIGH/CRITICAL vulnerability report
+      shell: bash
+      env:
+        DIGEST_REF: ${{ steps.image.outputs.digest_ref }}
+        TRIVY_DISTRO: ${{ inputs.trivy-distro }}
+        TRIVY_INSECURE: true
+      run: |
+        set -euo pipefail
+        trivy image \
+          --exit-code 0 \
+          --severity CRITICAL,HIGH \
+          --ignore-unfixed \
+          --vuln-type os,library \
+          "${DIGEST_REF}"

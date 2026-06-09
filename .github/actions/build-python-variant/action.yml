@@ -1,0 +1,122 @@
+name: Build Python variant
+description: Build and push a Python image variant.
+
+inputs:
+  version:
+    required: true
+    description: Python minor version.
+  variant:
+    required: true
+    description: Image variant.
+  ubuntu-version:
+    required: true
+    description: Ubuntu base version.
+  ubuntu-default:
+    required: true
+    description: Whether this Ubuntu version gets non-Ubuntu-specific tags.
+  python-patch:
+    required: true
+    description: Python patch version.
+  registry-image-prefix:
+    required: true
+    description: Registry image prefix.
+  ubuntu-base-image:
+    required: true
+    description: Ubuntu base image reference.
+  platform-suffix:
+    required: true
+    description: Tag platform suffix.
+  docker-platform:
+    required: false
+    default: ""
+    description: Optional Docker platform.
+  builder:
+    required: false
+    default: ""
+    description: Optional Buildx builder name.
+  upload-digest:
+    required: false
+    default: "false"
+    description: Upload a digest artifact for manifest merging.
+
+outputs:
+  digest:
+    value: ${{ steps.build_native.outputs.digest || steps.build_platform.outputs.digest }}
+    description: Built image digest.
+  version:
+    value: ${{ steps.metadata.outputs.version }}
+    description: First generated tag name.
+  tags:
+    value: ${{ steps.metadata.outputs.tags }}
+    description: Full image tags.
+  tags-file:
+    value: ${{ steps.metadata.outputs['tags-file'] }}
+    description: Path to file containing full image tags.
+
+runs:
+  using: composite
+  steps:
+    - name: Image metadata
+      id: metadata
+      uses: ./.github/actions/python-image-metadata
+      with:
+        version: ${{ inputs.version }}
+        variant: ${{ inputs.variant }}
+        ubuntu-version: ${{ inputs.ubuntu-version }}
+        ubuntu-default: ${{ inputs.ubuntu-default }}
+        python-patch: ${{ inputs.python-patch }}
+        registry-image-prefix: ${{ inputs.registry-image-prefix }}
+        platform-suffix: ${{ inputs.platform-suffix }}
+
+    - name: Build and push image
+      if: inputs.docker-platform == ''
+      id: build_native
+      uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+      with:
+        context: ./python
+        file: ./python/ubuntu${{ inputs.ubuntu-version }}/Dockerfile_${{ inputs.version }}
+        target: ${{ inputs.variant }}
+        tags: ${{ steps.metadata.outputs.tags }}
+        labels: ${{ steps.metadata.outputs.labels }}
+        builder: ${{ inputs.builder }}
+        build-args: |
+          UBUNTU_BASE_IMAGE=${{ inputs.ubuntu-base-image }}
+        push: true
+
+    - name: Build and push image
+      if: inputs.docker-platform != ''
+      id: build_platform
+      uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+      with:
+        context: ./python
+        file: ./python/ubuntu${{ inputs.ubuntu-version }}/Dockerfile_${{ inputs.version }}
+        target: ${{ inputs.variant }}
+        tags: ${{ steps.metadata.outputs.tags }}
+        labels: ${{ steps.metadata.outputs.labels }}
+        builder: ${{ inputs.builder }}
+        build-args: |
+          UBUNTU_BASE_IMAGE=${{ inputs.ubuntu-base-image }}
+        platforms: ${{ inputs.docker-platform }}
+        push: true
+
+    - name: Export digest
+      if: inputs.upload-digest == 'true'
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        VARIANT: ${{ inputs.variant }}
+        UBUNTU_VERSION: ${{ inputs.ubuntu-version }}
+        PUSH_DIGEST: ${{ steps.build_native.outputs.digest || steps.build_platform.outputs.digest }}
+      run: |
+        set -euo pipefail
+        mkdir -p "/tmp/digests/${VERSION}/${VARIANT}/ubuntu${UBUNTU_VERSION}"
+        touch "/tmp/digests/${VERSION}/${VARIANT}/ubuntu${UBUNTU_VERSION}/${PUSH_DIGEST#sha256:}"
+
+    - name: Upload digest
+      if: inputs.upload-digest == 'true'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: digests-${{ inputs.version }}-${{ inputs.variant }}-ubuntu${{ inputs.ubuntu-version }}-${{ inputs.platform-suffix }}
+        path: /tmp/digests/${{ inputs.version }}/${{ inputs.variant }}/ubuntu${{ inputs.ubuntu-version }}/*
+        if-no-files-found: error
+        retention-days: 1
