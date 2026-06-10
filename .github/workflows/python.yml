@@ -240,7 +240,7 @@ jobs:
       security-events: write # upload Trivy SARIF results for trusted PRs
     services:
       registry:
-        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373 # v2
+        image: registry:3@sha256:85347ed2ecde64161c7a4788a4d7d3dcc9d6f86f7be95834022e3c6a423a945a # v2
         ports:
           - 5000:5000
     env:
