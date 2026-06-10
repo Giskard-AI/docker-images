@@ -80,7 +80,7 @@ jobs:
               echo "Checking $f"
               grep -Fq "ARG UBUNTU_BASE_IMAGE=${image}" "$f"
               grep -Fq "/${debian_variant}-${debian_version}/Dockerfile" "$f"
-              grep -q '^FROM ${UBUNTU_BASE_IMAGE}$' "$f"
+              grep -q '^FROM ${UBUNTU_BASE_IMAGE} AS dev$' "$f"
             done
           done
 
