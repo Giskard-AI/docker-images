@@ -304,26 +304,26 @@ jobs:
         env:
           SUBJECT_NAME: ${{ steps.image.outputs.subject_name }}
 
-      - name: Sign final image tags
+      - name: Sign final image digest
         run: |
           set -euo pipefail
 
-          while IFS= read -r image_ref; do
-            cosign sign --yes "${image_ref}"
-          done < image-tags.txt
+          cosign sign --yes "${DIGEST_REF}"
+        env:
+          DIGEST_REF: ${{ steps.image.outputs.digest_ref }}
 
       - name: Attach platform SBOM attestations
         run: |
           set -euo pipefail
 
-          while IFS= read -r image_ref; do
-            for sbom in sbom-*.spdx.json; do
-              cosign attest --yes \
-                --predicate "${sbom}" \
-                --type spdxjson \
-                "${image_ref}"
-            done
-          done < image-tags.txt
+          for sbom in sbom-*.spdx.json; do
+            cosign attest --yes \
+              --predicate "${sbom}" \
+              --type spdxjson \
+              "${DIGEST_REF}"
+          done
+        env:
+          DIGEST_REF: ${{ steps.image.outputs.digest_ref }}
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0

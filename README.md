@@ -41,3 +41,41 @@ workflow builds the `3.12`, `3.13`, and `3.14` `dev` and `runtime` images for
 both configured Ubuntu bases and both configured platform runners, then
 publishes multi-platform manifests to Quay. Existing non-Ubuntu-specific
 variant tags continue to point at the Ubuntu `24.04` images for compatibility.
+
+## Published Image Metadata
+
+Final Quay images are published with Sigstore/cosign keyless signatures, SPDX
+JSON SBOM attestations, and GitHub build provenance. The publish workflow
+resolves each final multi-platform manifest digest, signs that immutable digest,
+attaches one SBOM attestation for each platform child manifest, and publishes
+GitHub provenance for the same final digest.
+
+SBOMs are generated from the pushed image digests. This includes `runtime`
+images, even though they are built `FROM scratch`: Syft scans the final runtime
+filesystem by digest, so the SBOM describes only files copied into the runtime
+image and does not reuse the `dev` image SBOM.
+
+Quay can show attached cosign and provenance metadata as `sha256-...` entries in
+the tag list. Those entries are OCI signature or attestation artifacts attached
+to the image digest, not additional runnable Python image tags. To limit Quay
+metadata noise, the workflow signs and attests the resolved digest once for each
+final manifest rather than signing every alias tag that points at that digest.
+
+Verify a published image with:
+
+```bash
+cosign verify \
+  --certificate-identity-regexp '^https://github\.com/Giskard-AI/docker-images/\.github/workflows/python\.yml@refs/heads/main$' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  quay.io/giskard/python:3.13-dev
+```
+
+Verify attached SPDX SBOM attestations with:
+
+```bash
+cosign verify-attestation \
+  --type spdxjson \
+  --certificate-identity-regexp '^https://github\.com/Giskard-AI/docker-images/\.github/workflows/python\.yml@refs/heads/main$' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  quay.io/giskard/python:3.13-dev
+```
