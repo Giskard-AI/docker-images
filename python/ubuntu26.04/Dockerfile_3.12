@@ -266,3 +266,4 @@ COPY --from=runtime-files /etc/ssl/certs /etc/ssl/certs
 COPY --from=runtime-files /usr/share/zoneinfo /usr/share/zoneinfo
 
 ENTRYPOINT ["python3"]
+
