@@ -226,7 +226,6 @@ for ubuntu_version in ${ubuntu_versions}; do
         write_header "${output_file}" "${ubuntu_base_image}" 'FROM ${UBUNTU_BASE_IMAGE} AS dev'
         install_python "${output_file}" "${python_version}" "${debian_variant}" "${debian_version}"
         append_runtime_image "${output_file}"
-        echo '' >>"${output_file}"
     done
 done
 
