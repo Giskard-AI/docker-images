@@ -96,9 +96,17 @@ runs:
         SBOM_FILE: ${{ steps.image.outputs.sbom_file }}
       run: |
         set -euo pipefail
-        cosign sign --yes --allow-insecure-registry "${DIGEST_REF}"
+        signing_config="$(mktemp)"
+        curl -fsSL https://raw.githubusercontent.com/sigstore/root-signing/refs/heads/main/targets/signing_config.v0.2.json \
+          | jq 'del(.rekorTlogUrls)' > "${signing_config}"
+
+        cosign sign --yes \
+          --allow-insecure-registry \
+          --signing-config "${signing_config}" \
+          "${DIGEST_REF}"
         cosign attest --yes \
           --allow-insecure-registry \
+          --signing-config "${signing_config}" \
           --predicate "${SBOM_FILE}" \
           --type spdxjson \
           "${DIGEST_REF}"
@@ -121,12 +129,14 @@ runs:
         while IFS= read -r image_ref; do
           cosign verify \
             --allow-insecure-registry \
+            --insecure-ignore-tlog \
             --certificate-identity-regexp "${CERTIFICATE_IDENTITY_REGEXP}" \
             --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
             "${image_ref}" > /dev/null
 
           actual_attestations="$(cosign verify-attestation \
             --allow-insecure-registry \
+            --insecure-ignore-tlog \
             --type spdxjson \
             --certificate-identity-regexp "${CERTIFICATE_IDENTITY_REGEXP}" \
             --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
