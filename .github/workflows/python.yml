@@ -143,6 +143,8 @@ jobs:
     permissions:
       contents: read # clone repo
       id-token: write # OIDC token for Quay registry auth
+      attestations: write # publish provenance attestations
+      security-events: write # upload Trivy SARIF results
     steps:
       - name: Checkout code
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -212,6 +214,188 @@ jobs:
           docker buildx imagetools inspect "${REGISTRY_IMAGE_PREFIX}python:${META_VERSION}"
         env:
           META_VERSION: ${{ steps.meta.outputs.version }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.71.0
+
+      - name: Extract final image metadata
+        id: image
+        run: |
+          set -euo pipefail
+
+          subject_name="${REGISTRY_IMAGE_PREFIX}python"
+          cp "${TAGS_FILE}" image-tags.txt
+
+          if [ ! -s image-tags.txt ]; then
+            echo "No final image tags found at ${TAGS_FILE}" >&2
+            exit 1
+          fi
+
+          first_tag="$(head -n 1 image-tags.txt)"
+          digest="$(docker buildx imagetools inspect "${first_tag}" --format '{{.Manifest.Digest}}')"
+          if ! printf '%s\n' "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "Failed to resolve manifest-list digest for ${first_tag}: ${digest}" >&2
+            exit 1
+          fi
+
+          {
+            echo "subject_name=${subject_name}"
+            echo "digest=${digest}"
+            echo "digest_ref=${subject_name}@${digest}"
+            echo "sarif_file=trivy-results-${VERSION}-${VARIANT}-ubuntu${UBUNTU_VERSION}.sarif"
+          } >> "$GITHUB_OUTPUT"
+        env:
+          REGISTRY_IMAGE_PREFIX: ${{ env.REGISTRY_IMAGE_PREFIX }}
+          TAGS_FILE: ${{ steps.meta.outputs['tags-file'] }}
+          VERSION: ${{ matrix.version }}
+          VARIANT: ${{ matrix.variant }}
+          UBUNTU_VERSION: ${{ matrix.ubuntu.version }}
+
+      - name: Extract platform manifests
+        run: |
+          set -euo pipefail
+
+          docker buildx imagetools inspect --raw "${DIGEST_REF}" \
+            | jq -r --arg subject "${SUBJECT_NAME}" '
+                .manifests[]
+                | select(.platform.os != "unknown" and .platform.architecture != "unknown")
+                | [
+                    (.platform.os + "/" + .platform.architecture),
+                    .digest,
+                    ($subject + "@" + .digest)
+                  ]
+                | @tsv
+              ' > platform-manifests.tsv
+
+          if [ ! -s platform-manifests.tsv ]; then
+            echo "No platform manifests found for ${DIGEST_REF}" >&2
+            exit 1
+          fi
+
+          cut -f1 platform-manifests.tsv | sort > platforms.txt
+          printf '%s\n' linux/amd64 linux/arm64 > expected-platforms.txt
+          if ! diff -u expected-platforms.txt platforms.txt; then
+            echo "Unexpected platform set for ${DIGEST_REF}" >&2
+            exit 1
+          fi
+        env:
+          DIGEST_REF: ${{ steps.image.outputs.digest_ref }}
+          SUBJECT_NAME: ${{ steps.image.outputs.subject_name }}
+
+      - name: Generate platform SBOMs
+        run: |
+          set -euo pipefail
+
+          while IFS=$'\t' read -r platform digest image_ref; do
+            sbom="sbom-${platform//\//-}.spdx.json"
+            syft "${image_ref}" \
+              --source-name "${SUBJECT_NAME}:${platform}" \
+              --source-version "${digest}" \
+              -o "spdx-json=${sbom}"
+          done < platform-manifests.tsv
+        env:
+          SUBJECT_NAME: ${{ steps.image.outputs.subject_name }}
+
+      - name: Sign final image tags
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r image_ref; do
+            cosign sign --yes "${image_ref}"
+          done < image-tags.txt
+
+      - name: Attach platform SBOM attestations
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r image_ref; do
+            for sbom in sbom-*.spdx.json; do
+              cosign attest --yes \
+                --predicate "${sbom}" \
+                --type spdxjson \
+                "${image_ref}"
+            done
+          done < image-tags.txt
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ${{ steps.image.outputs.subject_name }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+
+      - name: Verify signatures and SBOM attestations
+        run: |
+          set -euo pipefail
+
+          expected_attestations="$(find . -maxdepth 1 -name 'sbom-*.spdx.json' | wc -l)"
+          if [ "${expected_attestations}" -eq 0 ]; then
+            echo "No SBOM files were generated" >&2
+            exit 1
+          fi
+
+          while IFS= read -r image_ref; do
+            cosign verify \
+              --certificate-identity-regexp "${CERTIFICATE_IDENTITY_REGEXP}" \
+              --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+              "${image_ref}" > /dev/null
+
+            actual_attestations="$(cosign verify-attestation \
+              --type spdxjson \
+              --certificate-identity-regexp "${CERTIFICATE_IDENTITY_REGEXP}" \
+              --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+              "${image_ref}" | wc -l)"
+
+            if [ "${actual_attestations}" -lt "${expected_attestations}" ]; then
+              echo "Expected at least ${expected_attestations} SPDX JSON attestations for ${image_ref}, found ${actual_attestations}" >&2
+              exit 1
+            fi
+          done < image-tags.txt
+        env:
+          CERTIFICATE_IDENTITY_REGEXP: ^https://github\.com/Giskard-AI/docker-images/\.github/workflows/python\.yml@refs/heads/main$
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+
+      - name: Run Trivy SARIF scan
+        run: |
+          set -euo pipefail
+          trivy image \
+            --format sarif \
+            --output "${SARIF_FILE}" \
+            --exit-code 0 \
+            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+            --vuln-type os,library \
+            "${DIGEST_REF}"
+        env:
+          DIGEST_REF: ${{ steps.image.outputs.digest_ref }}
+          SARIF_FILE: ${{ steps.image.outputs.sarif_file }}
+          TRIVY_DISTRO: ubuntu/${{ matrix.ubuntu.version }}
+
+      - name: Upload Trivy SARIF results
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          sarif_file: ${{ steps.image.outputs.sarif_file }}
+          category: final-python-${{ matrix.version }}-${{ matrix.variant }}-ubuntu${{ matrix.ubuntu.version }}
+
+      - name: Run Trivy vulnerability report
+        run: |
+          set -euo pipefail
+          trivy image \
+            --exit-code 0 \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --vuln-type os,library \
+            "${DIGEST_REF}"
+        env:
+          DIGEST_REF: ${{ steps.image.outputs.digest_ref }}
+          TRIVY_DISTRO: ubuntu/${{ matrix.ubuntu.version }}
 
   verify-pr:
     name: Verify PR image flow (${{ matrix.version }} variants on Ubuntu ${{ matrix.ubuntu.version }} / ${{ matrix.platform.name }})
