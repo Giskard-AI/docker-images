@@ -1,0 +1,117 @@
+name: Python image metadata
+description: Generate Python image tags and OCI labels.
+
+inputs:
+  version:
+    required: true
+    description: Python minor version.
+  variant:
+    required: true
+    description: Image variant.
+  ubuntu-version:
+    required: true
+    description: Ubuntu base version.
+  ubuntu-default:
+    required: true
+    description: Whether this Ubuntu version gets non-Ubuntu-specific tags.
+  python-patch:
+    required: true
+    description: Python patch version.
+  registry-image-prefix:
+    required: true
+    description: Registry image prefix.
+  platform-suffix:
+    required: false
+    default: ""
+    description: Optional platform suffix for platform-specific tags.
+
+outputs:
+  image:
+    value: ${{ steps.metadata.outputs.image }}
+    description: Image repository.
+  version:
+    value: ${{ steps.metadata.outputs.version }}
+    description: First generated tag name.
+  tags:
+    value: ${{ steps.metadata.outputs.tags }}
+    description: Full image tags.
+  labels:
+    value: ${{ steps.metadata.outputs.labels }}
+    description: OCI labels.
+  tags-file:
+    value: ${{ steps.metadata.outputs.tags_file }}
+    description: Path to file containing full image tags.
+
+runs:
+  using: composite
+  steps:
+    - name: Generate metadata
+      id: metadata
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        VARIANT: ${{ inputs.variant }}
+        UBUNTU_VERSION: ${{ inputs.ubuntu-version }}
+        UBUNTU_DEFAULT: ${{ inputs.ubuntu-default }}
+        PYTHON_PATCH: ${{ inputs.python-patch }}
+        REGISTRY_IMAGE_PREFIX: ${{ inputs.registry-image-prefix }}
+        PLATFORM_SUFFIX: ${{ inputs.platform-suffix }}
+      run: |
+        set -euo pipefail
+
+        output_dir="${RUNNER_TEMP}/python-image-metadata/${VERSION}-${VARIANT}-ubuntu${UBUNTU_VERSION}-${PLATFORM_SUFFIX:-manifest}"
+        image="${REGISTRY_IMAGE_PREFIX}python"
+        mkdir -p "${output_dir}"
+
+        tag_names=()
+        if [ "${UBUNTU_DEFAULT}" = "true" ]; then
+          if [ -n "${PLATFORM_SUFFIX}" ]; then
+            tag_names+=("${VERSION}-${VARIANT}-${PLATFORM_SUFFIX}")
+            tag_names+=("${PYTHON_PATCH}-${VARIANT}-${PLATFORM_SUFFIX}")
+          else
+            tag_names+=("${VERSION}-${VARIANT}")
+            tag_names+=("${PYTHON_PATCH}-${VARIANT}")
+          fi
+        fi
+
+        if [ -n "${PLATFORM_SUFFIX}" ]; then
+          tag_names+=("${VERSION}-${VARIANT}-ubuntu${UBUNTU_VERSION}-${PLATFORM_SUFFIX}")
+          tag_names+=("${PYTHON_PATCH}-${VARIANT}-ubuntu${UBUNTU_VERSION}-${PLATFORM_SUFFIX}")
+        else
+          tag_names+=("${VERSION}-${VARIANT}-ubuntu${UBUNTU_VERSION}")
+          tag_names+=("${PYTHON_PATCH}-${VARIANT}-ubuntu${UBUNTU_VERSION}")
+        fi
+
+        tags_file="${output_dir}/tags.txt"
+        labels_file="${output_dir}/labels.txt"
+        : > "${tags_file}"
+        for tag_name in "${tag_names[@]}"; do
+          printf '%s:%s\n' "${image}" "${tag_name}" >> "${tags_file}"
+        done
+
+        created="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        source_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+        version_label="${tag_names[0]}"
+
+        cat > "${labels_file}" <<EOF
+        org.opencontainers.image.created=${created}
+        org.opencontainers.image.description=
+        org.opencontainers.image.licenses=MIT
+        org.opencontainers.image.revision=${GITHUB_SHA}
+        org.opencontainers.image.source=${source_url}
+        org.opencontainers.image.title=docker-images
+        org.opencontainers.image.url=${source_url}
+        org.opencontainers.image.version=${version_label}
+        EOF
+
+        {
+          echo "image=${image}"
+          echo "version=${version_label}"
+          echo "tags_file=${tags_file}"
+          echo "tags<<EOF"
+          cat "${tags_file}"
+          echo "EOF"
+          echo "labels<<EOF"
+          cat "${labels_file}"
+          echo "EOF"
+        } >> "${GITHUB_OUTPUT}"
