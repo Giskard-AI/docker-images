@@ -379,7 +379,7 @@ jobs:
           TRIVY_DISTRO: ubuntu/${{ matrix.ubuntu.version }}
 
       - name: Upload Trivy SARIF results
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
         with:
           sarif_file: ${{ steps.image.outputs.sarif_file }}
           category: final-python-${{ matrix.version }}-${{ matrix.variant }}-ubuntu${{ matrix.ubuntu.version }}
