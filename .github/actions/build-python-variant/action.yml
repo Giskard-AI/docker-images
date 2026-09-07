@@ -58,7 +58,7 @@ runs:
   steps:
     - name: Image metadata
       id: metadata
-      uses: ./.github/actions/python-image-metadata
+      uses: $/.github/actions/python-image-metadata
       with:
         version: ${{ inputs.version }}
         variant: ${{ inputs.variant }}

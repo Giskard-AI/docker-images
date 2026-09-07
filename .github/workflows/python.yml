@@ -97,7 +97,7 @@ jobs:
 
       - name: Build and push dev
         id: dev
-        uses: ./.github/actions/build-python-variant
+        uses: $/.github/actions/build-python-variant
         with:
           version: ${{ matrix.version }}
           variant: dev
@@ -112,7 +112,7 @@ jobs:
 
       - name: Build and push runtime
         id: runtime
-        uses: ./.github/actions/build-python-variant
+        uses: $/.github/actions/build-python-variant
         with:
           version: ${{ matrix.version }}
           variant: runtime
@@ -173,7 +173,7 @@ jobs:
 
       - name: Image metadata
         id: meta
-        uses: ./.github/actions/python-image-metadata
+        uses: $/.github/actions/python-image-metadata
         with:
           version: ${{ matrix.version }}
           variant: ${{ matrix.variant }}
@@ -465,7 +465,7 @@ jobs:
 
       - name: Build and push dev to local registry
         id: dev
-        uses: ./.github/actions/build-python-variant
+        uses: $/.github/actions/build-python-variant
         with:
           version: ${{ matrix.version }}
           variant: dev
@@ -486,7 +486,7 @@ jobs:
 
       - name: Build and push runtime to local registry
         id: runtime
-        uses: ./.github/actions/build-python-variant
+        uses: $/.github/actions/build-python-variant
         with:
           version: ${{ matrix.version }}
           variant: runtime
@@ -517,7 +517,7 @@ jobs:
           version: v0.74.0
 
       - name: Verify dev local registry image
-        uses: ./.github/actions/verify-python-registry-image
+        uses: $/.github/actions/verify-python-registry-image
         with:
           variant: dev
           registry-image-prefix: ${{ env.REGISTRY_IMAGE_PREFIX }}
@@ -530,7 +530,7 @@ jobs:
           sarif-category: pr-python-${{ matrix.version }}-dev-ubuntu${{ matrix.ubuntu.version }}-${{ matrix.platform.name }}
 
       - name: Verify runtime local registry image
-        uses: ./.github/actions/verify-python-registry-image
+        uses: $/.github/actions/verify-python-registry-image
         with:
           variant: runtime
           registry-image-prefix: ${{ env.REGISTRY_IMAGE_PREFIX }}
