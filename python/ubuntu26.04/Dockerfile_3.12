@@ -1,6 +1,6 @@
 # DO NOT MODIFY MANUALLY
 # GENERATED FROM SCRIPTS
-ARG UBUNTU_BASE_IMAGE=ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+ARG UBUNTU_BASE_IMAGE=ubuntu:26.04@sha256:3595d7fc4286a33fad0fd853a4063e654287a9c3787437d7937c94ca3f7a804e
 FROM ${UBUNTU_BASE_IMAGE} AS dev
 
 # Avoid tzdata interactive action
@@ -10,7 +10,7 @@ ENV DEBIAN_FRONTEND noninteractive
 
 # Dockerfile generated fragment to install Python and Pip
 # Source: https://raw.githubusercontent.com/docker-library/python/master/3.12/slim-trixie/Dockerfile
-# Python: 3.12.14
+# Python: 3.12.15
 
 
 # ensure local python is preferred over distribution python
@@ -32,8 +32,8 @@ RUN set -eux; \
 	apt-get dist-clean
 
 ENV GPG_KEY 7169605F62C751356D054A26A821E680E5FA6305
-ENV PYTHON_VERSION 3.12.14
-ENV PYTHON_SHA256 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
+ENV PYTHON_VERSION 3.12.15
+ENV PYTHON_SHA256 c2c4321961fab0fb999d66e0cecf521c2ab3994c7992873ea99e306c1094fd5a
 
 RUN set -eux; \
 	\
