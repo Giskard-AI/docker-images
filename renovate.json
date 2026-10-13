@@ -6,5 +6,23 @@
     ":pinAllExceptPeerDependencies",
     "docker:pinDigests"
   ],
-  "minimumReleaseAge": "3 days"
+  "minimumReleaseAge": "3 days",
+  "packageRules": [
+    {
+      "description": "Group GitHub Actions and action version inputs into a single PR. Leave workflow Docker images (services/containers) ungrouped.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchDepTypes": [
+        "action",
+        "uses-with",
+        "workflow"
+      ],
+      "groupName": "{{manager}} dependencies",
+      "groupSlug": "{{manager}}-deps",
+      "matchUpdateTypes": [
+        "*"
+      ]
+    }
+  ]
 }
