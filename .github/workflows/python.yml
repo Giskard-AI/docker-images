@@ -29,7 +29,7 @@ env:
 jobs:
   build:
     if: github.event_name == 'push'
-    name: Build ${{ matrix.version }} variants on Ubuntu ${{ matrix.ubuntu.version }} (${{ matrix.platform }})
+    name: Build ${{ matrix.version }} variants on Ubuntu ${{ matrix.ubuntu.version }} (${{ matrix.platform.name }})
     strategy:
       matrix:
         version: ["3.12", "3.13", "3.14"]
@@ -38,9 +38,14 @@ jobs:
             default: true
           - version: "26.04"
             default: false
-        platform: ['ubuntu-latest', 'runner-ubuntu24-arm64']
+        # `name` is the published platform tag suffix; keep it stable when changing runners.
+        platform:
+          - name: ubuntu-latest
+            runner: ubuntu-latest
+          - name: runner-ubuntu24-arm64
+            runner: ubuntu-24.04-arm
       fail-fast: false
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.platform.runner }}
     permissions:
       contents: read # clone repo
       id-token: write # OIDC token for Quay registry auth
@@ -106,7 +111,7 @@ jobs:
           python-patch: ${{ steps.ver.outputs.python_patch }}
           registry-image-prefix: ${{ env.REGISTRY_IMAGE_PREFIX }}
           ubuntu-base-image: ${{ steps.ubuntu.outputs.base_image }}
-          platform-suffix: ${{ matrix.platform }}
+          platform-suffix: ${{ matrix.platform.name }}
           builder: ${{ steps.builder.outputs.name }}
           upload-digest: "true"
 
@@ -121,7 +126,7 @@ jobs:
           python-patch: ${{ steps.ver.outputs.python_patch }}
           registry-image-prefix: ${{ env.REGISTRY_IMAGE_PREFIX }}
           ubuntu-base-image: ${{ steps.ubuntu.outputs.base_image }}
-          platform-suffix: ${{ matrix.platform }}
+          platform-suffix: ${{ matrix.platform.name }}
           builder: ${{ steps.builder.outputs.name }}
           upload-digest: "true"
 
@@ -410,10 +415,10 @@ jobs:
             default: false
         platform:
           - name: amd64
-            runner: blacksmith-2vcpu-ubuntu-2404
+            runner: ubuntu-latest
             docker: linux/amd64
           - name: arm64
-            runner: blacksmith-2vcpu-ubuntu-2404-arm
+            runner: ubuntu-24.04-arm
             docker: linux/arm64
       fail-fast: false
     runs-on: ${{ matrix.platform.runner }}
