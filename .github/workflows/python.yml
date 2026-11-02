@@ -41,7 +41,7 @@ jobs:
         # `name` is the published platform tag suffix; keep it stable when changing runners.
         platform:
           - name: ubuntu-latest
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - name: runner-ubuntu24-arm64
             runner: ubuntu-24.04-arm
       fail-fast: false
@@ -415,7 +415,7 @@ jobs:
             default: false
         platform:
           - name: amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             docker: linux/amd64
           - name: arm64
             runner: ubuntu-24.04-arm
