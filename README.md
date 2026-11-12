@@ -31,10 +31,13 @@ Ubuntu base image digests and fragment choices are tracked in
 
 ## Update Flow
 
-The scheduled `Update python dockerfile` workflow refreshes the pinned
-`ubuntu:24.04` and `ubuntu:26.04` digests in `python/base-images.json`,
-regenerates Ubuntu-specific Python Dockerfiles, then opens or updates the
-`cron-python-update` pull request.
+Renovate refreshes the pinned `ubuntu:24.04` and `ubuntu:26.04` digests: one
+pull request updates `python/base-images.json` and the generated Dockerfiles
+together. It never moves a base image to another Ubuntu release.
+
+The weekly `Update python dockerfile` workflow regenerates the Ubuntu-specific
+Python Dockerfiles with the latest Python patch versions, then opens or updates
+the `cron-python-update` pull request.
 
 After generated Dockerfile changes land on `main`, the `Publish the images`
 workflow builds the `3.12`, `3.13`, and `3.14` `dev` and `runtime` images for

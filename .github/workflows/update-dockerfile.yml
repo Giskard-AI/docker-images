@@ -2,7 +2,8 @@ name: Update python dockerfile
 
 on:
     schedule:
-    - cron: '0 4 * * *'
+    # Monday 04:00 UTC: inside the shared Renovate window (Monday 00:00-06:59 Europe/Paris) all year.
+    - cron: '0 4 * * 1'
     workflow_dispatch:
 
 concurrency:
@@ -12,51 +13,20 @@ concurrency:
 permissions: {}
 
 jobs:
-  update:
-    name: Update Dockerfiles
+  generate:
+    name: Generate Dockerfiles
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: automation
     permissions:
-      contents: read # clone repo (app token handles write operations)
+      contents: read # clone repo
+    outputs:
+      changed: ${{ steps.changes.outputs.changed }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: ${{ github.sha }}
           persist-credentials: false
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Update Ubuntu base image digests
-        id: update_ubuntu
-        working-directory: python
-        run: |
-          set -euo pipefail
-          tmp="$(mktemp)"
-          cp base-images.json "${tmp}"
-
-          for version in 24.04 26.04; do
-            digest="$(docker buildx imagetools inspect "ubuntu:${version}" --format '{{.Manifest.Digest}}')"
-            if ! printf '%s\n' "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-              echo "Failed to parse ubuntu:${version} digest" >&2
-              exit 1
-            fi
-            image="ubuntu:${version}@${digest}"
-            jq --arg version "${version}" --arg image "${image}" \
-              '.images[$version].image = $image' "${tmp}" > "${tmp}.next"
-            mv "${tmp}.next" "${tmp}"
-          done
-
-          if cmp -s base-images.json "${tmp}"; then
-            echo "updated=false" >> "$GITHUB_OUTPUT"
-          else
-            mv "${tmp}" base-images.json
-            echo "updated=true" >> "$GITHUB_OUTPUT"
-          fi
-
-          rm -f "${tmp}" "${tmp}.next"
 
       - name: Try to update dockerfile
         working-directory: python
@@ -84,6 +54,45 @@ jobs:
             done
           done
 
+      - name: Detect changes
+        id: changes
+        run: |
+          if git diff --quiet -- 'python/ubuntu*/Dockerfile_*'; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload generated Dockerfiles
+        if: steps.changes.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dockerfiles
+          path: python/ubuntu*/Dockerfile_*
+          if-no-files-found: error
+          retention-days: 1
+
+  create-pr:
+    name: Open the update PR
+    needs: generate
+    if: needs.generate.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    environment: automation
+    permissions:
+      contents: read # clone repo (app token handles write operations)
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download generated Dockerfiles
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dockerfiles
+          path: python
+
       - name: Generate automation token
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -96,12 +105,11 @@ jobs:
       - name: Create Pull Request # zizmor: ignore[superfluous-actions]
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          commit-message: Updating to latest python version and ubuntu base digest
+          commit-message: Update Python to the latest patch versions
           add-paths: |
             python/ubuntu*/Dockerfile_*
-            python/base-images.json
-            python/generate_dockerfile.sh
+          base: main
           branch: cron-python-update
-          title: Updating to latest python version and ubuntu base digest
+          title: Update Python to the latest patch versions
           assignees: Hartorn
           token: ${{ steps.app-token.outputs.token }}
