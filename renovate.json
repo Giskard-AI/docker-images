@@ -3,34 +3,47 @@
   "extends": [
     "github>Giskard-AI/.github",
     ":pinAllExceptPeerDependencies",
-    "docker:pinDigests",
-    "group:monorepos",
-    "group:recommended"
+    "docker:pinDigests"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track the pinned Ubuntu base images in python/base-images.json, the source that python/generate_dockerfile.sh copies into the Dockerfiles.",
+      "managerFilePatterns": [
+        "/^python/base-images\\.json$/"
+      ],
+      "matchStrings": [
+        "\"image\":\\s*\"(?<depName>[^\":@]+):(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "docker"
+    }
   ],
   "packageRules": [
     {
-      "description": "Undo the shared preset's one-PR-per-manager grouping, so that workflow and Dockerfile images keep their own PRs. group:monorepos and group:recommended are extended again above, after the shared preset, so that the groups they set win over it and are not reset here.",
-      "matchJsonata": [
-        "groupSlug = '{{manager}}-deps'"
+      "description": "Both Ubuntu versions are built on purpose: never move a base image to another Ubuntu release, only refresh its digest.",
+      "matchDatasources": [
+        "docker"
       ],
-      "groupName": null,
-      "groupSlug": null
+      "matchPackageNames": [
+        "ubuntu"
+      ],
+      "matchUpdateTypes": [
+        "major",
+        "minor",
+        "patch"
+      ],
+      "enabled": false
     },
     {
-      "description": "Group GitHub Actions and action version inputs into a single PR. Leave workflow Docker images (services/containers) ungrouped.",
-      "matchManagers": [
-        "github-actions"
+      "description": "Update the Ubuntu digests of python/base-images.json and of the generated Dockerfiles in one PR, so they stay identical.",
+      "matchDatasources": [
+        "docker"
       ],
-      "matchDepTypes": [
-        "action",
-        "uses-with",
-        "workflow"
+      "matchPackageNames": [
+        "ubuntu"
       ],
-      "groupName": "{{manager}} dependencies",
-      "groupSlug": "{{manager}}-deps",
-      "matchUpdateTypes": [
-        "*"
-      ]
+      "groupName": "ubuntu base image digests",
+      "groupSlug": "ubuntu-digests"
     }
   ]
 }
