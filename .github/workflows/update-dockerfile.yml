@@ -36,24 +36,7 @@ jobs:
 
       - name: Verify Ubuntu digest is pinned in Dockerfiles
         run: |
-          set -euo pipefail
-          jq -e '.default == "24.04"' python/base-images.json
-          jq -e '.images["24.04"].image | test("^ubuntu:24\\.04@sha256:[0-9a-f]{64}$")' python/base-images.json
-          jq -e '.images["26.04"].image | test("^ubuntu:26\\.04@sha256:[0-9a-f]{64}$")' python/base-images.json
-          jq -e '.images["24.04"].debian_version == "bookworm"' python/base-images.json
-          jq -e '.images["26.04"].debian_version == "trixie"' python/base-images.json
-
-          for version in 24.04 26.04; do
-            image="$(jq -r --arg version "${version}" '.images[$version].image' python/base-images.json)"
-            debian_variant="$(jq -r --arg version "${version}" '.images[$version].debian_variant' python/base-images.json)"
-            debian_version="$(jq -r --arg version "${version}" '.images[$version].debian_version' python/base-images.json)"
-            for f in "python/ubuntu${version}"/Dockerfile_*; do
-              echo "Checking $f"
-              grep -Fq "ARG UBUNTU_BASE_IMAGE=${image}" "$f"
-              grep -Fq "/${debian_variant}-${debian_version}/Dockerfile" "$f"
-              grep -q '^FROM ${UBUNTU_BASE_IMAGE} AS dev$' "$f"
-            done
-          done
+          bash python/check_dockerfiles.sh
 
       - name: Detect changes
         id: changes
