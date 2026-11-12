@@ -21,6 +21,7 @@ jobs:
       contents: read # clone repo
     outputs:
       changed: ${{ steps.changes.outputs.changed }}
+      python_versions: ${{ steps.changes.outputs.python_versions }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,11 +58,24 @@ jobs:
       - name: Detect changes
         id: changes
         run: |
-          if git diff --quiet -- 'python/ubuntu*/Dockerfile_*'; then
+          set -euo pipefail
+          # One <ubuntu>:<python line>:<old>:<new> entry per changed Dockerfile.
+          entries=()
+          while read -r f; do
+            ubuntu="${f#python/ubuntu}"
+            ubuntu="${ubuntu%%/*}"
+            old="$(git show "HEAD:${f}" | sed -nE 's/^ENV PYTHON_VERSION[ =]//p')"
+            new="$(sed -nE 's/^ENV PYTHON_VERSION[ =]//p' "${f}")"
+            entries+=("${ubuntu}:${f##*/Dockerfile_}:${old}:${new}")
+          done < <(git diff --name-only -- 'python/ubuntu*/Dockerfile_*')
+
+          if [ "${#entries[@]}" -eq 0 ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
+            printf '%s\n' "${entries[@]}"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+          echo "python_versions=${entries[*]}" >> "$GITHUB_OUTPUT"
 
       - name: Upload generated Dockerfiles
         if: steps.changes.outputs.changed == 'true'
@@ -93,6 +107,67 @@ jobs:
           name: dockerfiles
           path: python
 
+      - name: Build commit message and PR title
+        id: message
+        env:
+          PYTHON_VERSIONS: ${{ needs.generate.outputs.python_versions }}
+        run: |
+          set -euo pipefail
+          # The versions come from the job that ran repository code: accept strict version strings only.
+          read -ra entries <<< "${PYTHON_VERSIONS}"
+          if [ "${#entries[@]}" -eq 0 ] || [[ "${PYTHON_VERSIONS}" == *$'\n'* ]]; then
+            echo "Missing or multi-line Python version entries" >&2
+            exit 1
+          fi
+          mapfile -t entries < <(printf '%s\n' "${entries[@]}" | sort -t: -k2,2V -k1,1V)
+
+          declare -A pairs=()
+          minors=()
+          body=""
+          for i in "${!entries[@]}"; do
+            IFS=: read -r ubuntu minor old new extra <<< "${entries[$i]}"
+            if ! [[ "${ubuntu}" =~ ^[0-9]+\.[0-9]+$ && "${minor}" =~ ^3\.[0-9]+$ \
+              && "${old}" =~ ^3\.[0-9]+\.[0-9]+$ && "${new}" =~ ^3\.[0-9]+\.[0-9]+$ \
+              && "${old}" == "${minor}".* && "${new}" == "${minor}".* && -z "${extra}" ]]; then
+              echo "Invalid Python version entry #${i}" >&2
+              exit 1
+            fi
+            body+="- Ubuntu ${ubuntu}, Python ${minor}: ${old} → ${new}"$'\n'
+            if [ "${old}" != "${new}" ]; then
+              [[ -v "pairs[${minor}]" ]] || minors+=("${minor}")
+              pairs[${minor}]+="${old} → ${new} (Ubuntu ${ubuntu})"$'\n'
+            fi
+          done
+
+          # One entry per Python line, split per Ubuntu version only when they differ.
+          items=()
+          for minor in "${minors[@]}"; do
+            mapfile -t changes < <(printf '%s' "${pairs[${minor}]}")
+            mapfile -t distinct < <(printf '%s\n' "${changes[@]}" | sed 's/ (Ubuntu .*)$//' | sort -u)
+            if [ "${#distinct[@]}" -eq 1 ]; then
+              items+=("${distinct[0]}")
+            else
+              items+=("${changes[@]}")
+            fi
+          done
+
+          if [ "${#items[@]}" -eq 0 ]; then
+            title="chore(deps): regenerate Python Dockerfiles"
+          else
+            printf -v joined '%s, ' "${items[@]}"
+            title="chore(deps): update Python ${joined%, }"
+          fi
+
+          {
+            echo "title=${title}"
+            echo "body<<EOF"
+            printf '%s' "${body}"
+            echo "EOF"
+            echo "commit-message<<EOF"
+            printf '%s\n\n%s' "${title}" "${body}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Generate automation token
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -105,11 +180,12 @@ jobs:
       - name: Create Pull Request # zizmor: ignore[superfluous-actions]
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          commit-message: Update Python to the latest patch versions
+          commit-message: ${{ steps.message.outputs.commit-message }}
           add-paths: |
             python/ubuntu*/Dockerfile_*
           base: main
           branch: cron-python-update
-          title: Update Python to the latest patch versions
+          title: ${{ steps.message.outputs.title }}
+          body: ${{ steps.message.outputs.body }}
           assignees: Hartorn
           token: ${{ steps.app-token.outputs.token }}
