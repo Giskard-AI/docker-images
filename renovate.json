@@ -1,13 +1,21 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
-    "helpers:pinGitHubActionDigests",
+    "github>Giskard-AI/.github",
     ":pinAllExceptPeerDependencies",
-    "docker:pinDigests"
+    "docker:pinDigests",
+    "group:monorepos",
+    "group:recommended"
   ],
-  "minimumReleaseAge": "3 days",
   "packageRules": [
+    {
+      "description": "Undo the shared preset's one-PR-per-manager grouping, so that workflow and Dockerfile images keep their own PRs. group:monorepos and group:recommended are extended again above, after the shared preset, so that the groups they set win over it and are not reset here.",
+      "matchJsonata": [
+        "groupSlug = '{{manager}}-deps'"
+      ],
+      "groupName": null,
+      "groupSlug": null
+    },
     {
       "description": "Group GitHub Actions and action version inputs into a single PR. Leave workflow Docker images (services/containers) ungrouped.",
       "matchManagers": [
