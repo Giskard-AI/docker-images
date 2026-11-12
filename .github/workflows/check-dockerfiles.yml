@@ -1,0 +1,29 @@
+name: Check Dockerfiles
+
+on:
+  pull_request:
+    paths:
+      - 'python/**'
+      - '.github/workflows/check-dockerfiles.yml'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Dockerfiles match base-images.json
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # clone repo
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify Ubuntu digest is pinned in Dockerfiles
+        run: |
+          bash python/check_dockerfiles.sh

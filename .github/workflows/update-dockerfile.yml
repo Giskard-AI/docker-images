@@ -2,7 +2,8 @@ name: Update python dockerfile
 
 on:
     schedule:
-    - cron: '0 4 * * *'
+    # Weekly, Monday 04:00 UTC: the same morning as the shared Renovate schedule.
+    - cron: '0 4 * * 1'
     workflow_dispatch:
 
 concurrency:
@@ -12,51 +13,22 @@ concurrency:
 permissions: {}
 
 jobs:
-  update:
-    name: Update Dockerfiles
+  generate:
+    name: Generate Dockerfiles
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: automation
     permissions:
-      contents: read # clone repo (app token handles write operations)
+      contents: read # clone repo
+    outputs:
+      changed: ${{ steps.changes.outputs.changed }}
+      fragment_changed: ${{ steps.changes.outputs.fragment_changed }}
+      python_versions: ${{ steps.changes.outputs.python_versions }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: ${{ github.sha }}
           persist-credentials: false
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Update Ubuntu base image digests
-        id: update_ubuntu
-        working-directory: python
-        run: |
-          set -euo pipefail
-          tmp="$(mktemp)"
-          cp base-images.json "${tmp}"
-
-          for version in 24.04 26.04; do
-            digest="$(docker buildx imagetools inspect "ubuntu:${version}" --format '{{.Manifest.Digest}}')"
-            if ! printf '%s\n' "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-              echo "Failed to parse ubuntu:${version} digest" >&2
-              exit 1
-            fi
-            image="ubuntu:${version}@${digest}"
-            jq --arg version "${version}" --arg image "${image}" \
-              '.images[$version].image = $image' "${tmp}" > "${tmp}.next"
-            mv "${tmp}.next" "${tmp}"
-          done
-
-          if cmp -s base-images.json "${tmp}"; then
-            echo "updated=false" >> "$GITHUB_OUTPUT"
-          else
-            mv "${tmp}" base-images.json
-            echo "updated=true" >> "$GITHUB_OUTPUT"
-          fi
-
-          rm -f "${tmp}" "${tmp}.next"
 
       - name: Try to update dockerfile
         working-directory: python
@@ -65,24 +37,246 @@ jobs:
 
       - name: Verify Ubuntu digest is pinned in Dockerfiles
         run: |
-          set -euo pipefail
-          jq -e '.default == "24.04"' python/base-images.json
-          jq -e '.images["24.04"].image | test("^ubuntu:24\\.04@sha256:[0-9a-f]{64}$")' python/base-images.json
-          jq -e '.images["26.04"].image | test("^ubuntu:26\\.04@sha256:[0-9a-f]{64}$")' python/base-images.json
-          jq -e '.images["24.04"].debian_version == "bookworm"' python/base-images.json
-          jq -e '.images["26.04"].debian_version == "trixie"' python/base-images.json
+          bash python/check_dockerfiles.sh
 
-          for version in 24.04 26.04; do
-            image="$(jq -r --arg version "${version}" '.images[$version].image' python/base-images.json)"
-            debian_variant="$(jq -r --arg version "${version}" '.images[$version].debian_variant' python/base-images.json)"
-            debian_version="$(jq -r --arg version "${version}" '.images[$version].debian_version' python/base-images.json)"
-            for f in "python/ubuntu${version}"/Dockerfile_*; do
-              echo "Checking $f"
-              grep -Fq "ARG UBUNTU_BASE_IMAGE=${image}" "$f"
-              grep -Fq "/${debian_variant}-${debian_version}/Dockerfile" "$f"
-              grep -q '^FROM ${UBUNTU_BASE_IMAGE} AS dev$' "$f"
-            done
+      - name: Detect changes
+        id: changes
+        run: |
+          set -euo pipefail
+          # Upstream content must match strict formats before it reaches the log or the job outputs.
+          version_re='^3\.[0-9]+\.[0-9]+$'
+          sha_re='^[0-9a-f]{64}$'
+          env_value() {
+            # Print the only value of ENV $1 in the Dockerfile on stdin, if it matches $2.
+            local value
+            value="$(sed -nE "s/^ENV $1[ =]//p")"
+            [[ "${value}" =~ $2 ]] && printf '%s' "${value}"
+          }
+          strip_versions() {
+            grep -vE '^(ENV PYTHON_(VERSION|SHA256)[ =]|# Python: )' || true
+          }
+
+          staging="${RUNNER_TEMP}/dockerfiles"
+          old_file="$(mktemp)"
+          # One <ubuntu>:<python line>:<old>:<new>:<review> entry per changed Dockerfile.
+          entries=()
+          fragment_changed=false
+          while read -r status f; do
+            ubuntu="${f#python/ubuntu}"
+            ubuntu="${ubuntu%%/*}"
+            minor="${f##*/Dockerfile_}"
+            if ! [[ "${ubuntu}" =~ ^[0-9]+\.[0-9]+$ && "${minor}" =~ ^3\.[0-9]+$ \
+              && "${f}" == "python/ubuntu${ubuntu}/Dockerfile_${minor}" ]]; then
+              echo "Unexpected Dockerfile path" >&2
+              exit 1
+            fi
+            case "${status}" in
+              M) git show "HEAD:${f}" > "${old_file}" ;;
+              '??') : > "${old_file}" ;;
+              *) echo "Unexpected change to ${f}" >&2; exit 1 ;;
+            esac
+
+            if ! new="$(env_value PYTHON_VERSION "${version_re}" < "${f}")" \
+              || ! new_sha="$(env_value PYTHON_SHA256 "${sha_re}" < "${f}")"; then
+              echo "${f}: expected exactly one valid PYTHON_VERSION and PYTHON_SHA256" >&2
+              exit 1
+            fi
+            if [ "${status}" = "??" ]; then
+              old=none
+              old_sha=none
+            elif ! old="$(env_value PYTHON_VERSION "${version_re}" < "${old_file}")" \
+              || ! old_sha="$(env_value PYTHON_SHA256 "${sha_re}" < "${old_file}")"; then
+              echo "${f}: committed file has no single valid PYTHON_VERSION and PYTHON_SHA256" >&2
+              exit 1
+            fi
+
+            # Flag any change besides the version and its checksum, and a version or checksum changing alone.
+            review=false
+            if ! cmp -s <(strip_versions < "${old_file}") <(strip_versions < "${f}") \
+              || [[ "${old}" == "${new}" && "${old_sha}" != "${new_sha}" ]] \
+              || [[ "${old}" != "${new}" && "${old_sha}" == "${new_sha}" ]]; then
+              review=true
+              fragment_changed=true
+            fi
+            entries+=("${ubuntu}:${minor}:${old}:${new}:${review}")
+
+            mkdir -p "${staging}/${f%/*}"
+            cp "${f}" "${staging}/${f}"
+          done < <(git status --porcelain --untracked-files=all -- 'python/ubuntu*/Dockerfile_*')
+
+          if [ "${#entries[@]}" -eq 0 ]; then
+            changed=false
+          else
+            printf '%s\n' "${entries[@]}"
+            changed=true
+          fi
+          {
+            echo "changed=${changed}"
+            echo "fragment_changed=${fragment_changed}"
+            echo "python_versions=${entries[*]}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload generated Dockerfiles
+        if: steps.changes.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dockerfiles
+          # Artifact root is the staging directory: files are stored as python/ubuntu<version>/Dockerfile_<python line>.
+          path: ${{ runner.temp }}/dockerfiles/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Runs even without changes, so that create-pull-request closes an obsolete update PR.
+  create-pr:
+    name: Open the update PR
+    needs: generate
+    runs-on: ubuntu-latest
+    environment: automation
+    permissions:
+      contents: read # clone repo (app token handles write operations)
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download generated Dockerfiles
+        if: needs.generate.outputs.changed == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dockerfiles
+          path: ${{ runner.temp }}/dockerfiles
+
+      - name: Place generated Dockerfiles
+        if: needs.generate.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/dockerfiles"
+          if [ -n "$(find . -mindepth 1 ! -type d ! -type f)" ]; then
+            echo "The artifact may only contain regular files" >&2
+            exit 1
+          fi
+          mapfile -t files < <(find . -type f -printf '%P\n' | sort)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "The artifact is empty" >&2
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            if ! [[ "${f}" =~ ^python/ubuntu[0-9]+\.[0-9]+/Dockerfile_3\.[0-9]+$ ]]; then
+              echo "Unexpected file in the artifact" >&2
+              exit 1
+            fi
           done
+          cp --parents "${files[@]}" "${GITHUB_WORKSPACE}/"
+
+      - name: Build commit message and PR title
+        id: message
+        if: needs.generate.outputs.changed == 'true'
+        env:
+          PYTHON_VERSIONS: ${{ needs.generate.outputs.python_versions }}
+          FRAGMENT_CHANGED: ${{ needs.generate.outputs.fragment_changed }}
+        run: |
+          set -euo pipefail
+          # These values come from the job that ran repository and upstream code: accept strict formats only.
+          if [ "${FRAGMENT_CHANGED}" != "true" ] && [ "${FRAGMENT_CHANGED}" != "false" ]; then
+            echo "Invalid fragment_changed value" >&2
+            exit 1
+          fi
+          read -ra entries <<< "${PYTHON_VERSIONS}"
+          if [ "${#entries[@]}" -eq 0 ] || [[ "${PYTHON_VERSIONS}" == *$'\n'* ]]; then
+            echo "Missing or multi-line Python version entries" >&2
+            exit 1
+          fi
+          mapfile -t entries < <(printf '%s\n' "${entries[@]}" | sort -t: -k2,2V -k1,1V)
+
+          version_re='^3\.[0-9]+\.[0-9]+$'
+          declare -A pairs=()
+          minors=()
+          expected=()
+          flagged=()
+          lines=""
+          for i in "${!entries[@]}"; do
+            IFS=: read -r ubuntu minor old new review extra <<< "${entries[$i]}"
+            if ! [[ "${ubuntu}" =~ ^[0-9]+\.[0-9]+$ && "${minor}" =~ ^3\.[0-9]+$ \
+              && "${new}" =~ ${version_re} && "${new}" == "${minor}".* \
+              && ( ( "${old}" =~ ${version_re} && "${old}" == "${minor}".* ) || ( "${old}" == none && "${review}" == true ) ) \
+              && ( "${review}" == true || "${review}" == false ) && -z "${extra}" ]]; then
+              echo "Invalid Python version entry #${i}" >&2
+              exit 1
+            fi
+            file="python/ubuntu${ubuntu}/Dockerfile_${minor}"
+            expected+=("${file}")
+            if [ "${old}" = none ]; then
+              change="${new} (new)"
+            else
+              change="${old} → ${new}"
+            fi
+            line="- Ubuntu ${ubuntu}, Python ${minor}: ${change}"
+            if [ "${review}" = true ]; then
+              flagged+=("${file}")
+              line+=" (review the full diff)"
+            fi
+            lines+="${line}"$'\n'
+            if [ "${old}" != "${new}" ]; then
+              [[ -v "pairs[${minor}]" ]] || minors+=("${minor}")
+              pairs[${minor}]+="${change} (Ubuntu ${ubuntu})"$'\n'
+            fi
+          done
+
+          has_flagged=false
+          [ "${#flagged[@]}" -eq 0 ] || has_flagged=true
+          if [ "${FRAGMENT_CHANGED}" != "${has_flagged}" ]; then
+            echo "fragment_changed does not match the flagged Dockerfiles" >&2
+            exit 1
+          fi
+          actual="$(git status --porcelain --untracked-files=all | sed -E 's/^.. //' | sort)"
+          if [ "${actual}" != "$(printf '%s\n' "${expected[@]}" | sort)" ]; then
+            echo "The downloaded Dockerfiles do not match the reported changes" >&2
+            exit 1
+          fi
+
+          # One entry per Python line, split per Ubuntu version only when they differ.
+          items=()
+          for minor in "${minors[@]}"; do
+            mapfile -t changes < <(printf '%s' "${pairs[${minor}]}")
+            mapfile -t distinct < <(printf '%s\n' "${changes[@]}" | sed 's/ (Ubuntu .*)$//' | sort -u)
+            if [ "${#distinct[@]}" -eq 1 ]; then
+              items+=("${distinct[0]}")
+            else
+              items+=("${changes[@]}")
+            fi
+          done
+
+          if [ "${#items[@]}" -eq 0 ]; then
+            title="chore(deps): regenerate Python Dockerfiles"
+          else
+            printf -v joined '%s, ' "${items[@]}"
+            title="chore(deps): update Python ${joined%, }"
+          fi
+
+          body=""
+          if [ "${#flagged[@]}" -gt 0 ]; then
+            body+='> [!WARNING]'$'\n'
+            # shellcheck disable=SC2016 # literal Markdown backticks
+            body+='> The upstream docker-library fragment changed beyond `PYTHON_VERSION` and `PYTHON_SHA256`,'$'\n'
+            body+='> or a version and its checksum did not change together. Review the full diff of:'$'\n'
+            for file in "${flagged[@]}"; do
+              body+="> - \`${file}\`"$'\n'
+            done
+            body+=$'\n'
+          fi
+          body+="${lines}"
+
+          {
+            echo "title=${title}"
+            echo "body<<EOF"
+            printf '%s' "${body}"
+            echo "EOF"
+            echo "commit-message<<EOF"
+            printf '%s\n\n%s' "${title}" "${lines}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Generate automation token
         id: app-token
@@ -93,15 +287,17 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
+      # Without changes, the branch no longer differs from main: the action deletes it, which closes the PR.
       - name: Create Pull Request # zizmor: ignore[superfluous-actions]
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          commit-message: Updating to latest python version and ubuntu base digest
+          commit-message: ${{ steps.message.outputs.commit-message }}
           add-paths: |
             python/ubuntu*/Dockerfile_*
-            python/base-images.json
-            python/generate_dockerfile.sh
+          base: main
           branch: cron-python-update
-          title: Updating to latest python version and ubuntu base digest
+          delete-branch: true
+          title: ${{ steps.message.outputs.title }}
+          body: ${{ steps.message.outputs.body }}
           assignees: Hartorn
           token: ${{ steps.app-token.outputs.token }}
