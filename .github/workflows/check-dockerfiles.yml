@@ -1,10 +1,9 @@
 name: Check Dockerfiles
 
 on:
+  # No paths filter: this is a required check, and a filtered-out run never
+  # reports, which would block every pull request that does not touch python/.
   pull_request:
-    paths:
-      - 'python/**'
-      - '.github/workflows/check-dockerfiles.yml'
 
 permissions: {}
 
