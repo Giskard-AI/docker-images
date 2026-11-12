@@ -33,11 +33,19 @@ Ubuntu base image digests and fragment choices are tracked in
 
 Renovate refreshes the pinned `ubuntu:24.04` and `ubuntu:26.04` digests: one
 pull request updates `python/base-images.json` and the generated Dockerfiles
-together. It never moves a base image to another Ubuntu release.
+together. It opens it on a Monday, at least 7 days after Docker Hub publishes
+the digest, and never moves a base image to another Ubuntu release.
 
 The weekly `Update python dockerfile` workflow regenerates the Ubuntu-specific
-Python Dockerfiles with the latest Python patch versions, then opens or updates
-the `cron-python-update` pull request.
+Python Dockerfiles with the latest Python patch versions. It opens or updates
+the `cron-python-update` pull request only when a Dockerfile changes, and
+closes that pull request once `main` no longer needs it. The pull request body
+warns when the upstream fragment changed beyond the Python version and its
+checksum.
+
+The `Check Dockerfiles` workflow checks on every pull request touching
+`python/` that the Dockerfiles use the digests pinned in
+`python/base-images.json`.
 
 After generated Dockerfile changes land on `main`, the `Publish the images`
 workflow builds the `3.12`, `3.13`, and `3.14` `dev` and `runtime` images for
