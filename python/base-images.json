@@ -2,12 +2,12 @@
   "default": "24.04",
   "images": {
     "24.04": {
-      "image": "ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5",
+      "image": "ubuntu:24.04@sha256:73b999393d07f2bf65a40373778a44dc9a6d54ad7718d29247d8ff9413c4d6a8",
       "debian_variant": "slim",
       "debian_version": "bookworm"
     },
     "26.04": {
-      "image": "ubuntu:26.04@sha256:065aa8626841f16057b78b027b464cd59c4fac36c204c72dcbf48d66f5fa8a96",
+      "image": "ubuntu:26.04@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db",
       "debian_variant": "slim",
       "debian_version": "trixie"
     }
